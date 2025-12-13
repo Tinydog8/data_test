@@ -2,6 +2,11 @@ using LinearAlgebra
 using Logging
 
 # =========================
+# Optional plotting support
+# (only requires CairoMakie when you call plotting functions)
+# =========================
+
+# =========================
 # Chebyshev differentiation
 # =========================
 function chebydif(N::Int)
@@ -207,5 +212,156 @@ function compute_hinf_vs_k(k_values; flow_type="couette", N=200, Re=1.0, La=0.1,
         push!(bestωs, ω⋆)
     end
     return k_values, norms, bestωs
+end
+
+# ==================================
+# Extract most amplified mode (SVD of G at optimal k, ω)
+# ==================================
+function extract_most_unstable_mode_closed(k_values, norms, bestωs;
+                                           flow_type="couette", N=200, Re=1.0, La=0.1,
+                                           u_s_params=(1.0, 2pi / 2.4))
+    idx = argmax(norms)
+    k_optimal = k_values[idx]
+    ω_optimal = bestωs[idx]
+
+    z, D1, Δ, Δ2, U′ = build_matrices(N, k_optimal; flow_type=flow_type)
+
+    u_s = if u_s_params isa Number
+        u_s_params
+    elseif u_s_params isa Tuple
+        u_s0_star, k_w_star = u_s_params
+        stokes_drift_profile(z, u_s0_star, k_w_star)
+    elseif u_s_params isa Function
+        u_s_params(z)
+    else
+        error("u_s_params must be Number, Tuple(u_s0_star,k_w_star), or Function")
+    end
+
+    G_matrix = G_closed_frequency(Δ, Δ2, D1, U′, u_s, La, k_optimal, Re, ω_optimal)
+    svd_result = svd(Matrix(G_matrix))
+
+    return (; k_optimal, ω_optimal, z, G_matrix, svd_result)
+end
+
+# ==================================
+# Mode visualization helpers (CairoMakie)
+# ==================================
+
+"""
+    physical_field_closed(mode_vec, z, k; nspan=200)
+
+Convert a spanwise Fourier mode to a real physical-space field:
+    field(y,z) = Re{ mode(z) * exp(i k y) }.
+
+If `mode_vec` has length `3*length(z)` (forcing mode stacked as [fx;fy;fz]),
+this function will by default take the `fy` block (2nd block) for visualization.
+"""
+function physical_field_closed(mode_vec, z, k; nspan=200, forcing_component::Symbol=:fy)
+    n_z = length(z)
+    n_mode = length(mode_vec)
+
+    if n_mode == 3 * n_z
+        block = forcing_component === :fx ? 1 :
+                forcing_component === :fy ? 2 :
+                forcing_component === :fz ? 3 :
+                error("forcing_component must be :fx, :fy, or :fz")
+        mode_vec = mode_vec[(block - 1) * n_z + 1:block * n_z]
+    elseif n_mode != n_z
+        error("mode_vec length ($n_mode) must be n_z ($n_z) or 3*n_z ($(3*n_z))")
+    end
+
+    y_span = range(0, 2π / k, length=nspan)
+    phases = exp.(im .* k .* y_span)
+    field = zeros(length(y_span), length(z))
+
+    for (m, phase) in enumerate(phases)
+        field[m, :] = real.(mode_vec .* phase)
+    end
+
+    return y_span, field
+end
+
+"""
+    plot_mode_pair_closed!(ax_phys, ax_fourier, z, mode_vec, title_label, k; forcing_component=:fy)
+
+Plot a mode in physical space (heatmap in y-z) and Fourier space (Re/Im vs z).
+If `mode_vec` is a forcing mode with length 3*n_z, select one forcing component.
+"""
+function plot_mode_pair_closed!(ax_phys, ax_fourier, z, mode_vec, title_label, k;
+                                forcing_component::Symbol=:fy)
+    import CairoMakie as CM
+
+    n_z = length(z)
+    n_mode = length(mode_vec)
+    mode_vec_plot = mode_vec
+    if n_mode == 3 * n_z
+        block = forcing_component === :fx ? 1 :
+                forcing_component === :fy ? 2 :
+                forcing_component === :fz ? 3 :
+                error("forcing_component must be :fx, :fy, or :fz")
+        mode_vec_plot = mode_vec[(block - 1) * n_z + 1:block * n_z]
+    elseif n_mode != n_z
+        error("mode_vec length ($n_mode) must be n_z ($n_z) or 3*n_z ($(3*n_z))")
+    end
+
+    y_span, field = physical_field_closed(mode_vec_plot, z, k; forcing_component=forcing_component)
+    clim = maximum(abs, field)
+
+    hm = CM.heatmap!(ax_phys, y_span, z, field;
+                     colormap=:balance, colorrange=(-clim, clim))
+    CM.contour!(ax_phys, y_span, z, field; levels=7, color=(:black, 0.4))
+    ax_phys.xlabel = "y"
+    ax_phys.ylabel = "z"
+    ax_phys.title = title_label * " (physical)"
+
+    CM.lines!(ax_fourier, real.(mode_vec_plot), z, color=:blue, label="Re", linewidth=2)
+    CM.lines!(ax_fourier, imag.(mode_vec_plot), z, color=:red, linestyle=:dash, label="Im", linewidth=2)
+    ax_fourier.xlabel = "Amplitude"
+    ax_fourier.ylabel = "z"
+    ax_fourier.title = title_label * " (Fourier)"
+    CM.axislegend(ax_fourier, position=:rb)
+
+    return hm
+end
+
+"""
+    plot_most_unstable_modes_closed(mode_data; n_modes=2, forcing_component=:fy)
+
+Given `mode_data` returned by `extract_most_unstable_mode_closed`, plot the first
+`n_modes` response modes (left singular vectors U) and forcing modes (right singular
+vectors V) of the transfer matrix G(iω*).
+
+`forcing_component` selects which block of the stacked forcing mode [fx;fy;fz] to visualize.
+"""
+function plot_most_unstable_modes_closed(mode_data; n_modes=2, forcing_component::Symbol=:fy)
+    import CairoMakie as CM
+
+    z = mode_data.z
+    k = mode_data.k_optimal
+    svd_result = mode_data.svd_result
+
+    response_modes = svd_result.U[:, 1:n_modes]
+    forcing_modes = svd_result.V[:, 1:n_modes]
+    sigmas = svd_result.S[1:n_modes]
+
+    fig = CM.Figure(size=(1400, 600 * n_modes))
+
+    for i in 1:n_modes
+        ax_phys_resp = CM.Axis(fig[i, 1])
+        ax_fourier_resp = CM.Axis(fig[i, 2])
+        hm_resp = plot_mode_pair_closed!(ax_phys_resp, ax_fourier_resp, z,
+                                         response_modes[:, i],
+                                         "Response mode u$i (σ=$(round(sigmas[i], digits=4)))", k)
+        CM.Colorbar(fig[i, 3], hm_resp, label="Re{mode}")
+
+        ax_phys_forc = CM.Axis(fig[i, 4])
+        ax_fourier_forc = CM.Axis(fig[i, 5])
+        hm_forc = plot_mode_pair_closed!(ax_phys_forc, ax_fourier_forc, z,
+                                         forcing_modes[:, i],
+                                         "Forcing mode v$i", k; forcing_component=forcing_component)
+        CM.Colorbar(fig[i, 6], hm_forc, label="Re{mode}")
+    end
+
+    return fig
 end
 
