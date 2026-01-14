@@ -1,0 +1,85 @@
+Oceananigans ChannelFlow LES POC 环境清单（已采集填写）
+生成时间: 2026-01-14
+
+1) 系统基本信息
+主机名: g001
+操作系统: Rocky Linux 8.6 (Green Obsidian)
+内核版本: 4.18.0-553.el8_10.x86_64
+架构: x86_64
+
+2) CPU/内存
+CPU 型号: Intel(R) Xeon(R) Gold 6336Y CPU @ 2.40GHz
+CPU 核心数: 48
+CPU 线程数: 48
+CPU 频率(采集值): 3600.0000 MHz
+内存: 503 GiB (available ~275 GiB)
+Swap: 11 GiB
+
+3) GPU/驱动/CUDA
+NVIDIA Driver: 560.35.05
+CUDA (nvidia-smi): 12.6
+CUDA 模块: cuda/12.6.3
+nvcc: Cuda compilation tools, release 12.6, V12.6.85
+
+GPU 列表（同机混合 A800 80GB 与 A100 40GB）:
+GPU0: NVIDIA A800 80GB PCIe, 80GB, compute capability 8.0
+GPU1: NVIDIA A800 80GB PCIe, 80GB, compute capability 8.0
+GPU2: NVIDIA A100-PCIE-40GB, 40GB, compute capability 8.0
+GPU3: NVIDIA A800 80GB PCIe, 80GB, compute capability 8.0
+GPU4: NVIDIA A800 80GB PCIe, 80GB, compute capability 8.0
+GPU5: NVIDIA A800 80GB PCIe, 80GB, compute capability 8.0
+GPU6: NVIDIA A800 80GB PCIe, 80GB, compute capability 8.0
+
+CUDA_VISIBLE_DEVICES: 未设置（注意：测试代码内显式设置为 \"0,1\"）
+
+4) 网络/存储
+以太网: ens27f0 (MTU 1500), IP 192.168.100.31/16
+InfiniBand: ib0 (MTU 2044), IP 10.2.2.1/16
+本地文件系统: /dev/mapper/rl-root 435G (Used 34G, Avail 402G), mount /
+并行文件系统: 未采集（如使用 Lustre/GPFS，请补充挂载点与输出路径）
+
+5) 模块环境（module list）
+julia/1.10.10
+gcc/14.2.0
+cuda/12.6.3
+ucx/1.16.0-gcc14.2-cuda12.6
+openmpi/4.1.3-gcc14.2-cuda12.6-ucx1.16
+
+6) MPI 环境
+mpiexec 版本: mpiexec (OpenRTE) 4.1.3
+MPI_HOME(环境变量): /share/software/openmpi/4.1.6-gcc14.2-cuda12.6-ucx1.16
+注意: 当前 openmpi 模块版本(4.1.3) 与 MPI_HOME/LD_LIBRARY_PATH 指向(4.1.6)不一致，建议统一并固化。
+
+7) Julia 环境与关键包版本
+Julia 版本: 1.10.10
+Julia 路径: /share/applications/julia/julia-1.10.10/bin/julia
+项目路径(PROJ): /share/home/jzh184/Case/ChannelFlow/MultiGPU_test
+JULIA_DEPOT_PATH: /share/home/jzh184/.julia:/share/applications/julia_depot
+JULIA_PKG_SERVER: https://pkg.julialang.org
+
+关键包版本（采集自 ~/.julia/environments/v1.10）:
+Oceananigans v0.102.5
+CUDA.jl v5.9.6
+MPI.jl v0.20.23
+MPIPreferences v0.1.11
+JLD2 v0.6.3
+NCDatasets v0.14.10
+NetCDF v0.12.2
+CairoMakie v0.15.8
+
+MPI.jl 绑定的 MPI 库（采集输出）:
+MPI 版本: 4.1.0
+libmpi.so 路径: ~/.julia/artifacts/.../lib/libmpi.so
+注意: 可能不是系统 OpenMPI 模块库；如需做多节点性能取证，建议切换/固化为 system MPI，并在日志打印实际 libmpi.so 路径。
+
+8) 本次测试代码配置（从采集中提取）
+网格: Nx=100, Ny=100, Nz=50
+设备: ENV[\"CUDA_VISIBLE_DEVICES\"]=\"0,1\"
+Simulation: Δt=0.4, stop_time=4hours
+TimeStepWizard: cfl=0.8, max_change=1.1, max_Δt=0.1minute
+
+9) 风险/注意事项（建议纳入报告“备注”）
+1. 当前 GPU 型号混用（A800 80GB 与 A100 40GB），若跨 GPU 做扩展测试，建议保证同一作业内 GPU 同型号/同显存，或明确调度策略。
+2. 当前有 GPU 显示被占用（nvidia-smi processes 列表），正式性能测试建议独占资源并记录当时 GPU-Util/进程占用。
+3. OpenMPI 版本路径不一致（4.1.3 vs 4.1.6）以及 MPI.jl 可能使用 artifact MPI，建议在正式多节点测试前统一与固化，避免运行时库混用导致结果不可复核。
+

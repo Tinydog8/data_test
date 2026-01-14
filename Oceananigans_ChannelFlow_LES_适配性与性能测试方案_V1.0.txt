@@ -25,6 +25,74 @@ Oceananigans 多卡并行 Channel Flow（LES）适配性测试与性能测试方
 ·GPU/进程映射：必须提供“rank→GPU”绑定策略说明与证据（日志行或脚本），并明确每节点进程数、每 GPU 进程数、是否启用 CUDA-aware MPI/GPUDirect 等。
 ·存储：并行文件系统/本地盘类型（如 Lustre/GPFS/NVMe），并注明输出目录所在挂载点，避免 I/O 干扰可复核。
 
+2.2.1 本次已采集的环境信息（可直接粘贴到报告/附件）
+（A）系统/CPU/内存
+·主机名：g001
+·操作系统：Rocky Linux 8.6 (Green Obsidian)
+·内核版本：4.18.0-553.el8_10.x86_64
+·架构：x86_64
+·CPU：Intel(R) Xeon(R) Gold 6336Y CPU @ 2.40GHz
+·CPU 核心数/线程数：48 / 48
+·CPU 频率（采集值）：3600.0000 MHz
+·内存：503 GiB（available 约 275 GiB）
+·Swap：11 GiB
+
+（B）GPU/驱动/CUDA
+·NVIDIA Driver：560.35.05
+·CUDA（nvidia-smi 报告）：12.6
+·nvcc：Cuda compilation tools, release 12.6, V12.6.85（cuda/12.6.3 模块）
+·GPU 清单（同机 7 卡，型号不完全一致）：
+  - GPU0: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+  - GPU1: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+  - GPU2: NVIDIA A100-PCIE-40GB (40GB, cc 8.0)
+  - GPU3: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+  - GPU4: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+  - GPU5: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+  - GPU6: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+·CUDA_VISIBLE_DEVICES（系统环境）：未设置（但测试代码中显式设置为 \"0,1\"）
+
+（C）网络/存储
+·以太网接口：ens27f0，MTU 1500，IP 192.168.100.31/16
+·InfiniBand 接口：ib0，MTU 2044，IP 10.2.2.1/16
+·本地根分区：/dev/mapper/rl-root 435G（Used 34G, Avail 402G）
+·并行文件系统：本次采集未给出（如实际使用 Lustre/GPFS，请补充挂载点与用于输出的路径）
+
+（D）模块与编译/MPI 软件栈
+·当前加载模块（module list）：
+  - julia/1.10.10
+  - gcc/14.2.0
+  - cuda/12.6.3
+  - ucx/1.16.0-gcc14.2-cuda12.6
+  - openmpi/4.1.3-gcc14.2-cuda12.6-ucx1.16
+·mpiexec 版本（采集）：mpiexec (OpenRTE) 4.1.3
+·MPI_HOME（环境变量）：/share/software/openmpi/4.1.6-gcc14.2-cuda12.6-ucx1.16
+  注意：当前“加载模块 openmpi/4.1.3”与“MPI_HOME/LD_LIBRARY_PATH 指向 openmpi/4.1.6”存在不一致，建议在正式测试前统一版本并固化（否则多节点运行可能出现 ABI/运行时库混用风险）。
+
+（E）Julia 运行环境
+·Julia 版本：1.10.10
+·Julia 路径：/share/applications/julia/julia-1.10.10/bin/julia
+·项目路径（PROJ）：/share/home/jzh184/Case/ChannelFlow/MultiGPU_test
+·JULIA_DEPOT_PATH：/share/home/jzh184/.julia:/share/applications/julia_depot
+·关键包版本（来自全局环境 v1.10 采集）：
+  - Oceananigans v0.102.5
+  - CUDA.jl v5.9.6
+  - MPI.jl v0.20.23
+  - MPIPreferences v0.1.11
+  - JLD2 v0.6.3
+  - NCDatasets v0.14.10 / NetCDF v0.12.2（如用 NetCDF 输出）
+  - CairoMakie v0.15.8（如绘图）
+·MPI.jl 绑定的 MPI 库（采集输出）：
+  - MPI 版本：4.1.0
+  - MPI 库路径：~/.julia/artifacts/.../lib/libmpi.so
+  注意：这表明 MPI.jl 可能使用了 Julia artifact/MPItrampoline 的 libmpi，而不是系统 OpenMPI 模块库；如需多节点与系统 OpenMPI/UCX 做性能对比与取证，建议在测试前将 MPI.jl 固化为“system MPI”（并在日志打印 libmpi.so 实际路径作为证据）。
+
+（F）本次案例关键配置（来自采集）
+·代码引用：using CUDA, MPI, Oceananigans, Oceananigans.DistributedComputations
+·网格：Nx=100, Ny=100, Nz=50
+·设备：ENV[\"CUDA_VISIBLE_DEVICES\"]=\"0,1\"
+·时间推进：Δt=0.4，stop_time=4hours
+·TimeStepWizard：cfl=0.8, max_change=1.1, max_Δt=0.1minute
+
 2.3 性能计时口径（必须遵循）
 ·仅统计“主模拟段 wall time”（从进入 time-stepping loop 开始到正常结束），不包含排队时间。
 ·Julia 首次启动的预编译/JIT 开销需单独记录，并与主模拟段 wall time 区分。
