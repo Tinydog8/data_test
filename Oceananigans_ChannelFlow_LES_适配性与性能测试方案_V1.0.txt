@@ -1,0 +1,320 @@
+Oceananigans 多卡并行 Channel Flow（LES）适配性测试与性能测试方案（V1.0）
+（仿 CESM POC 测试方案体例）
+
+1. 目的与范围
+本方案用于统一 Oceananigans.jl 在投标人/厂商所提供远程测试环境上的适配性验证与性能评测方法、取证要求及结果提交格式。测试结果将作为项目 POC 评分依据之一。
+
+2. 通用前提、约束与取证要求
+
+2.1 通用前提
+（1）Oceananigans 版本：投标人需明确所用源码来源（官方仓库/镜像/内部分发包）及版本标识（tag/commit）。
+（2）运行形态：允许“原生部署（Native）”或“容器部署（Container）”。投标人必须在报告中明确部署形态。
+（3）测试环境：由投标人提供可访问的远程资源与账号权限，并在规定窗口内按本方案执行测试。
+（4）多节点运行：所有测试均要求在多节点多 GPU 环境完成（不得仅在单节点模拟），并使用可复核的并行机制（推荐 MPI.jl 域分解或等价方案）。
+（5）资源隔离：测试期间应尽量提供独占/隔离计算资源，避免其他作业干扰性能测量。
+（6）可复现性：投标人需固定依赖（Project/Manifest）与关键参数；若做任何性能优化（MPI 透传、绑定、通信层、I/O 参数等），必须在报告中逐项声明并可复现。
+（7）精度口径：所有测试默认使用单精度/双精度以采购方发布的测试包为准；不得在未声明情况下通过更改精度、关闭物理项等手段“换取性能”。
+
+2.2 环境验真与取证（必须提供）
+投标人需在测试前提供并协助确认以下信息，采购方将截图/留存作为证据：
+·硬件清单：CPU 型号/主频/每节点核心数、内存容量；GPU 型号与显存；节点数量；GPU 拓扑（如 nvidia-smi topo -m）。
+·网络：互连类型（InfiniBand/以太网）、速率、关键配置（MTU、IB 速率等）。
+·软件栈：操作系统版本、内核版本；编译器版本（如涉及）；MPI 实现与版本；Slurm（如有）版本；
+        Julia 版本；Oceananigans/CUDA.jl/MPI.jl 版本；I/O 依赖（NetCDF/HDF5/JLD2 等）版本。
+·运行配置：网格规模、时间步长、LES 闭合、并行分解方式、进程/线程/绑定策略、I/O 频率等。
+·GPU/进程映射：必须提供“rank→GPU”绑定策略说明与证据（日志行或脚本），并明确每节点进程数、每 GPU 进程数、是否启用 CUDA-aware MPI/GPUDirect 等。
+·存储：并行文件系统/本地盘类型（如 Lustre/GPFS/NVMe），并注明输出目录所在挂载点，避免 I/O 干扰可复核。
+
+2.2.1 本次已采集的环境信息（可直接粘贴到报告/附件）
+（A）系统/CPU/内存
+·主机名：g001
+·操作系统：Rocky Linux 8.6 (Green Obsidian)
+·内核版本：4.18.0-553.el8_10.x86_64
+·架构：x86_64
+·CPU：Intel(R) Xeon(R) Gold 6336Y CPU @ 2.40GHz
+·CPU 核心数/线程数：48 / 48
+·CPU 频率（采集值）：3600.0000 MHz
+·内存：503 GiB（available 约 275 GiB）
+·Swap：11 GiB
+
+（B）GPU/驱动/CUDA
+·NVIDIA Driver：560.35.05
+·CUDA（nvidia-smi 报告）：12.6
+·nvcc：Cuda compilation tools, release 12.6, V12.6.85（cuda/12.6.3 模块）
+·GPU 清单（同机 7 卡，型号不完全一致）：
+  - GPU0: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+  - GPU1: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+  - GPU2: NVIDIA A100-PCIE-40GB (40GB, cc 8.0)
+  - GPU3: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+  - GPU4: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+  - GPU5: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+  - GPU6: NVIDIA A800 80GB PCIe (80GB, cc 8.0)
+·CUDA_VISIBLE_DEVICES（系统环境）：未设置（但测试代码中显式设置为 \"0,1\"）
+
+（C）网络/存储
+·以太网接口：ens27f0，MTU 1500，IP 192.168.100.31/16
+·InfiniBand 接口：ib0，MTU 2044，IP 10.2.2.1/16
+·本地根分区：/dev/mapper/rl-root 435G（Used 34G, Avail 402G）
+·并行文件系统：本次采集未给出（如实际使用 Lustre/GPFS，请补充挂载点与用于输出的路径）
+
+（D）模块与编译/MPI 软件栈
+·当前加载模块（module list）：
+  - julia/1.10.10
+  - gcc/14.2.0
+  - cuda/12.6.3
+  - ucx/1.16.0-gcc14.2-cuda12.6
+  - openmpi/4.1.3-gcc14.2-cuda12.6-ucx1.16
+·mpiexec 版本（采集）：mpiexec (OpenRTE) 4.1.3
+·MPI_HOME（环境变量）：/share/software/openmpi/4.1.6-gcc14.2-cuda12.6-ucx1.16
+  注意：当前“加载模块 openmpi/4.1.3”与“MPI_HOME/LD_LIBRARY_PATH 指向 openmpi/4.1.6”存在不一致，建议在正式测试前统一版本并固化（否则多节点运行可能出现 ABI/运行时库混用风险）。
+
+（E）Julia 运行环境
+·Julia 版本：1.10.10
+·Julia 路径：/share/applications/julia/julia-1.10.10/bin/julia
+·项目路径（PROJ）：/share/home/jzh184/Case/ChannelFlow/MultiGPU_test
+·JULIA_DEPOT_PATH：/share/home/jzh184/.julia:/share/applications/julia_depot
+·关键包版本（来自全局环境 v1.10 采集）：
+  - Oceananigans v0.102.5
+  - CUDA.jl v5.9.6
+  - MPI.jl v0.20.23
+  - MPIPreferences v0.1.11
+  - JLD2 v0.6.3
+  - NCDatasets v0.14.10 / NetCDF v0.12.2（如用 NetCDF 输出）
+  - CairoMakie v0.15.8（如绘图）
+·MPI.jl 绑定的 MPI 库（采集输出）：
+  - MPI 版本：4.1.0
+  - MPI 库路径：~/.julia/artifacts/.../lib/libmpi.so
+  注意：这表明 MPI.jl 可能使用了 Julia artifact/MPItrampoline 的 libmpi，而不是系统 OpenMPI 模块库；如需多节点与系统 OpenMPI/UCX 做性能对比与取证，建议在测试前将 MPI.jl 固化为“system MPI”（并在日志打印 libmpi.so 实际路径作为证据）。
+
+（F）本次案例关键配置（基于你提供的 ChannelFlow 脚本，建议作为“测试包固定口径”）
+·脚本关键行：ENV[\"CUDA_VISIBLE_DEVICES\"]=\"0,1\"；using CUDA; using MPI; using Oceananigans; using Oceananigans.DistributedComputations
+·并行架构：architecture = Distributed(GPU(), partition=Partition(nranks), devices=nothing, communicator=comm)
+  - 口径：每个 MPI rank 绑定 1 张 GPU；nranks = MPI.Comm_size(comm) 即使用 GPU 数（需在日志中打印 rank/nranks 与 GPU 名称）。
+·网格：RectilinearGrid(architecture, size=(Nx, Ny, Nz), extent=(π*H, π*H, H), halo=(4,4,4))
+  - H=15 m
+  - Nx=100, Ny=100, Nz=50（当前配置；招标测试可按资源固定为更大规模，但必须统一口径）
+·模型：NonhydrostaticModel
+  - advection = WENO(order=9)
+  - timestepper = :RungeKutta3
+  - tracers = (:T, :S)
+  - buoyancy = SeawaterBuoyancy()
+  - closure = AnisotropicMinimumDissipation()
+  - forcing: (u = Fx), 其中 Fx(x,y,z,t)=u★^2/H，u★=0.01
+  - 边界条件：
+    * 底部：u,v 使用基于阻力系数的 FluxBoundaryCondition（drag_u/drag_v），cᴰᵇ=(κ/log(z1/z0))^2，κ=0.4，z0=0.01 m
+    * T,S：顶/底均为 0 通量
+·初始场：u,v,w 带随机扰动；T=290K；S=35 PSU（注意：随机扰动需固定 seed，否则不同运行不可复核）
+·时间推进：
+  - Simulation(model, Δt=0.4, stop_time=4hours)
+  - TimeStepWizard(cfl=0.8, max_change=1.1, max_Δt=0.1minute)，每 10 step 更新
+·输出：
+  - JLD2Writer 输出 (u,v,w) 到 \"ChannelFlow_Velocity.jld2\"，schedule = TimeInterval(2hours)
+·计时（脚本现状）：
+  - 使用 start_time=time(); run!(simulation); end_time=time() 计算 elapsed_time（秒）
+  - 建议同时打印 MAIN_START/MAIN_END 时间戳，并补充吞吐计算（见 2.3 与 4.1）
+
+2.3 性能计时口径（必须遵循）
+·仅统计“主模拟段 wall time”（从进入 time-stepping loop 开始到正常结束），不包含排队时间。
+·Julia 首次启动的预编译/JIT 开销需单独记录，并与主模拟段 wall time 区分。
+·同时记录吞吐指标（必须可复核）：建议至少输出 MCells/s（每秒更新网格单元数）或 SimTime/day，并在日志中打印计算口径。
+·计时分段要求（必须落盘）：
+  - 预热段：Pkg.instantiate / Pkg.precompile / 首次 using 导致的 JIT（记录开始/结束时间戳）
+  - 主模拟段：time-stepping loop 的开始/结束（记录开始/结束时间戳 + wall time）
+  - 可选：I/O 段（如写场/写统计）耗时分解（便于解释瓶颈，但不强制计分）
+·吞吐建议口径（必须二选一并固定）：
+  - MCells/s = (Nx*Ny*Nz*steps_main) / wall_seconds_main
+  - SimTime/day = (ΔT_physical / wall_seconds_main) * 86400
+  其中 steps_main 或 ΔT_physical 必须在日志中打印。
+
+2.4 结果提交物（必须提供）
+每个测试项需提交以下材料（压缩打包）：
+·完整工程目录（CASE_ROOT）：Project.toml、Manifest.toml、运行脚本、配置文件、作业脚本。
+·运行证据：作业ID、节点清单、stdout/stderr、rank→GPU 映射、计时日志（主模拟段 wall time、吞吐）。
+·输出/统计：至少 1 份可读场输出（NetCDF/JLD2）与统计输出（平均速度剖面、壁面摩擦/阻力等）。
+·若采用容器：镜像信息（镜像名、版本、digest、构建方式）、运行命令与挂载策略、容器内软件栈版本。
+·参数与随机性：需提交 seed/初始扰动参数；如有随机数，必须固定 seed 并在日志中打印。
+·作业脚本证据：必须提交 sbatch/srun 脚本原件（含资源申请与绑定参数），不得仅给截图。
+·文件清单与哈希（建议）：对关键输出与日志给出 sha256（便于投标间结果归档与复核）。
+
+3. 测试项一：适配性测试（Channel Flow LES，短时运行）
+
+3.1 测试目标
+验证 Oceananigans 在投标人集群上可成功运行多节点多 GPU 并行的 Channel Flow LES 案例，且输出结构与关键统计结果正常、可追溯。
+
+3.2 测试配置（基准，以你提供脚本为准）
+（1）算例：Oceananigans 非静力（Nonhydrostatic）“槽道流/水道流”测试，水平 x/y 周期，z 方向深度 H，底部阻力边界（drag），顶/底 T/S 为零通量。
+（2）物理/闭合：SeawaterBuoyancy + tracers(:T,:S) + AnisotropicMinimumDissipation；u 方向恒定体力 Fx=u★^2/H（u★=0.01）。
+（3）数值格式：WENO(order=9)；timestepper=:RungeKutta3；TimeStepWizard(cfl=0.8,max_change=1.1,max_Δt=0.1minute)。
+（4）域与网格：H=15m；extent=(πH, πH, H)；halo=(4,4,4)；基准网格 Nx=100,Ny=100,Nz=50（若上调规模必须统一口径并在测试包固定）。
+（5）并行规模（强制）：≥2 节点、总 GPU 数 ≥4；每 rank 绑定 1 GPU，nranks=GPU 数。
+（6）模拟时长：stop_time=4hours（脚本已固定）；如采购方要求更长以稳定计时，可在测试包中统一调整（不得投标人自行缩短）。
+（7）输出：JLD2Writer 输出速度场 (u,v,w) 至 ChannelFlow_Velocity.jld2，输出间隔 2hours；同时必须输出统计/检查项（散度、速度幅值、wall time）。
+
+3.2.1 固定参数（建议在测试包中给出并强制）
+（1）时间推进：timestepper=:RungeKutta3；TimeStepWizard 参数 cfl=0.8,max_change=1.1,max_Δt=0.1minute；回调间隔 IterationInterval(10)。
+（2）对流格式：WENO(order=9)。
+（3）闭合/浮力：AnisotropicMinimumDissipation + SeawaterBuoyancy；tracers 固定为 (:T,:S)。
+（4）底部阻力：z0=0.01m，κ=0.4；cᴰᵇ=(κ/log(z1/z0))^2，drag_u/drag_v 形式保持一致；必须在日志打印 cᴰᵇ 数值与 z1。
+（5）随机扰动：必须固定 RNG seed（例如 StableRNGs/Random.seed!），否则集合/复测不可复核。
+
+3.2.2 目录与命名规范（建议强制）
+·CASE_ROOT：源码/依赖/脚本目录，必须可直接复现运行。
+·OUTPUT_ROOT：输出根目录（建议按 CASE 名与时间戳区分，避免成员间覆盖）。
+·每次作业必须输出：run_config.json（或 txt）+ timing.txt + stats.csv/json + field_output（至少 1 份）。
+
+3.3 参考执行步骤（示例）
+（1）依赖固定：在 CASE_ROOT 内准备 Project.toml/Manifest.toml；执行 instantiate + precompile（作为预热证据）。
+（2）多节点多 GPU 运行：通过作业系统提交（如 Slurm sbatch），用 srun 启动 Julia；
+     日志打印版本信息、网格/分解、GPU 列表与 rank→GPU 映射。
+（3）计时：在日志中明确“主模拟段开始/结束”，输出 wall time 与吞吐指标。
+
+3.3.1 作业脚本要求（必须包含的关键信息）
+（1）资源申请：节点数、GPU 数/节点、总 GPU 数、CPU 核数、内存、walltime。
+（2）绑定与亲和性：CPU 绑核策略、每 GPU 进程数、MPI rank 绑定；如使用 NCCL/MPI 变量，需在脚本中显式设置并记录。
+（3）运行命令：完整 srun/mpirun 命令行（含环境变量），不得省略。
+（4）输出定位：stdout/stderr 与 OUTPUT_ROOT 的对应关系要明确（日志中打印 OUTPUT_ROOT）。
+
+3.3.2 日志字段规范（建议强制打印，便于复核）
+必须在 stdout 中打印以下字段（关键字固定，便于 grep/解析）：
+  - OCEANANIGANS_VERSION: <tag/commit>
+  - JULIA_VERSION: <x.y.z>
+  - CUDA_DRIVER: <version> ; CUDA_RUNTIME/CUDA_JL: <version>
+  - MPI: <impl+version> ; MPI_JL: <version>
+  - CASE_NAME: <name> ; OUTPUT_ROOT: <path>
+  - GRID: Nx=<>, Ny=<>, Nz=<>
+  - DOMAIN: Lx=<>, Ly=<>, Lz=<>
+  - LES_CLOSURE: <WALE/Smag> ; PARAMS: <key=val...>
+  - DECOMP: Px=<>, Pz=<> ; RANKS=<total>
+  - GPU_BINDING: rank0->gpu0,...（至少打印每节点映射摘要）
+  - WARMUP_START/END (timestamp)
+  - MAIN_START/END (timestamp)
+  - MAIN_WALL_SECONDS: <sec>
+  - THROUGHPUT: <MCells/s or SimTime/day> ; THROUGHPUT_DEF: <formula>
+  - CHECKS: max_div=<>, rms_div=<>, Cf=<>, u_tau=<>, mass_balance=<...>
+
+3.4 通过判据（必须同时满足）
+1）运行成功：作业正常结束（退出码 0），无致命错误；无 NaN/Inf/发散（若出现需解释并复现通过后方可算通过）。
+2）多节点多 GPU 真实性：提交节点清单、通信/分解证据与 rank→GPU 映射，证明跨节点并行实际启用。
+3）输出正常：存在可读输出文件（NetCDF/JLD2），可提供变量清单或 header 片段。
+4）基本物理合理性：散度指标在阈值内；壁面摩擦相关量为正且稳定；平均速度剖面形态合理并可复核。
+
+3.4.1 建议的最小合理性阈值（可按采购方测试包调整）
+（1）数值稳定性：主模拟段内无 NaN/Inf；时间步长/自适应步长不应出现频繁“回退/爆炸式缩小”。
+（2）不可压缩约束：max(|∇·u|) 与 rms(|∇·u|) 必须低于阈值（阈值以网格与无量纲化口径固定；建议提供参考值）。
+（3）壁面摩擦：Cf>0 且在统计窗口内波动合理（不得出现符号翻转或极端尖峰）。
+（4）速度剖面：U(y) 剖面单调且无明显非物理振荡；必须输出 profile 数据文件（csv/txt）。
+
+3.5 输出目录结构（投标人需提供实际路径与清单）
+（1）CASE_ROOT（工程目录）示例：
+  CASE_ROOT/
+    Project.toml
+    Manifest.toml
+    run_channel_les.jl
+    config.json（可选）
+    run.slurm
+（2）OUTPUT_ROOT（输出目录）示例：
+  OUTPUT_ROOT/
+    stdout.txt / stderr.txt
+    run_config.txt（或 json）
+    timing.txt
+    stats.csv（或 json）
+    fields/（至少 1 份输出）
+    checks/（可选：divergence、profile、图）
+
+4. 测试项二：性能测试（3 类）
+
+4.1 通用计时方法（必须遵循）
+·性能统计仅使用主模拟段 wall time（剔除首次预编译/JIT）；同时提交预热段与主模拟段两类证据。
+·每个规模至少运行 1 次；时间允许建议重复 2 次并报告波动。
+·测试期间尽量独占资源；如不能独占，需记录节点负载并在报告中说明。
+·I/O 干扰控制：性能计时窗口内建议关闭高频三维场输出，仅保留低频统计；若必须输出场，则需在报告中说明并给出 I/O 耗时分解。
+·一致性要求：性能 A/B/C 的主模拟段 steps_main 或 ΔT_physical 必须一致（避免通过缩短运行“抬高吞吐”）。
+
+4.2 性能测试 A：多 GPU 线性扩展（Strong scaling）
+目的：评估不同 GPU 规模下加速比与扩展趋势。
+配置：与适配性测试一致（Re/网格/闭合固定）；运行时长建议更长以稳定计时；I/O 降频。
+规模：以 8 GPU 为基数，建议至少测试 8/16/32/64 GPU（可上不封顶）。
+Speedup(N)=T(8)/T(N)，T 为主模拟段 wall time。
+
+补充要求：
+·每个规模需记录：节点数、每节点 GPU 数、MPI ranks、分解参数（Px,Pz）、绑定策略、主模拟段 wall time、吞吐、以及并行效率（可选）。
+·若某规模出现性能反常（如 N 翻倍但更慢），需提交解释（网络、绑定、通信层、频繁同步等）与可复核证据（如 profiler 摘要）。
+
+表格模板：
+GPU数 | 节点数 | Wall time (hh:mm:ss) | 吞吐(MCells/s 或 SimTime/day) | Speedup | 备注（MPI/绑定/分解）
+8     |        |                      |                               | 1.0     |
+16    |        |                      |                               |         |
+32    |        |                      |                               |         |
+64    |        |                      |                               |         |
+
+4.3 性能测试 B：关键物理/闭合选项开销（固定规模）
+目的：量化增强闭合/额外输运等关键选项的吞吐影响，并验证可运行性。
+固定规模：例如 32 GPU（或采购方指定）。
+对比项：B1（基线闭合） vs B2（增强闭合/额外被动标量等），需在招标文件固定并可复核。
+输出校验：必须提交增强项对应变量存在/日志行证据（变量清单或 header 片段）。
+
+建议对比项（任选其一并固定）：
+·B2-1：Dynamic Smagorinsky（动态系数计算）
+·B2-2：额外被动标量输运（scalar advection-diffusion）+ 统计输出
+·B2-3：更高阶对流格式/滤波器（如启用，需声明）
+注意：不得通过降低网格/步数/输出频率等方式改变工作量；B1/B2 的 steps_main 必须一致。
+
+表格模板：
+固定GPU数 | 节点数 | 配置(B1/B2) | Wall time (hh:mm:ss) | 吞吐 | 开关校验（是/否） | 备注
+32        |        | B1          |                      |      |                  |
+32        |        | B2          |                      |      |                  |
+
+4.4 性能测试 C：集合（Ensemble）吞吐测试（10 成员）
+目的：评估多成员批量运行场景下的吞吐与运维组织能力。
+配置：10 成员；每成员固定步数/物理时长；成员差异使用不同随机扰动 seed（必须记录）。
+执行：允许串行或并行，但需如实记录并发度、总耗时与资源占用。
+输出：每成员均需成功完成并产出输出；提交成员级结果表与总汇总。
+
+补充要求：
+·成员管理：每个成员必须有独立 CASE_NAME 与 OUTPUT_ROOT，避免覆盖；必须输出 seed 与配置摘要。
+·并发说明：需给出“并发批次/并发度”的调度策略（例如每批 2 个作业并行、每作业占 8 GPU）。
+·总耗时定义：从第 1 个成员 MAIN_START 开始，到第 10 个成员 MAIN_END 结束的墙钟跨度（不含排队时间，但需记录每个作业的排队等待以便解释）。
+
+表格模板：
+成员ID | GPU数 | 节点数 | 并发批次/并发度 | Wall time (hh:mm:ss) | 吞吐 | 完成情况（成功/失败） | 备注（路径/日志/seed）
+01     |      |        |                 |                      |      |                      |
+02     |      |        |                 |                      |      |                      |
+03     |      |        |                 |                      |      |                      |
+04     |      |        |                 |                      |      |                      |
+05     |      |        |                 |                      |      |                      |
+06     |      |        |                 |                      |      |                      |
+07     |      |        |                 |                      |      |                      |
+08     |      |        |                 |                      |      |                      |
+09     |      |        |                 |                      |      |                      |
+10     |      |        |                 |                      |      |                      |
+
+5. 评分提示（如适用，最终以采购文件为准）
+适配性可按原生/容器设置不同系数；性能建议按入围厂商实测区间归一化评分，并结合扩展效率与基准吞吐。
+
+6. 附录：结果打包清单（建议目录）
+Oceananigans_POC_Submission_<VendorName>_<Date>.zip
+├─ 0_env_inventory/
+│  ├─ hardware.txt            # lscpu/free/nvidia-smi/topo 等
+│  ├─ software_stack.txt      # OS/Julia/Oceananigans/CUDA/MPI 版本
+│  └─ network_storage.txt     # IB/ETH/FS 信息（可选）
+├─ 1_compat_channel_les/
+│  ├─ CASE_ROOT/              # Project/Manifest/脚本/配置/作业脚本
+│  ├─ logs/                   # jobid/stdout/stderr/节点清单/rank-gpu
+│  └─ outputs/                # 场输出 + 统计输出
+├─ 2_perf_scaling_A/
+│  ├─ results_table.xlsx/csv
+│  └─ logs/
+├─ 3_perf_option_B/
+│  ├─ results_table.xlsx/csv
+│  └─ logs/
+└─ 4_perf_ensemble_C/
+   ├─ ensemble_table.xlsx/csv
+   └─ logs/
+
+附：建议的“单次测试记录表”（可放在 results_table 中）
+·CASE_NAME/CASE_ROOT/OUTPUT_ROOT
+·节点数/GPU数/每节点GPU数/CPU核数/内存
+·MPI实现与版本、Julia/Oceananigans/CUDA.jl/MPI.jl 版本
+·网格与域尺寸、闭合模型与参数、分解与绑定
+·WARMUP wall time、MAIN wall time、吞吐、（可选）I/O time
+·合理性检查摘要（max_div、rms_div、Cf、u_tau、profile 文件名）
