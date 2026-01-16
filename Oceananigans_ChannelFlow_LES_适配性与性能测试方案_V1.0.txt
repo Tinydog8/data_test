@@ -86,12 +86,32 @@ Oceananigans 多卡并行 Channel Flow（LES）适配性测试与性能测试方
   - MPI 库路径：~/.julia/artifacts/.../lib/libmpi.so
   注意：这表明 MPI.jl 可能使用了 Julia artifact/MPItrampoline 的 libmpi，而不是系统 OpenMPI 模块库；如需多节点与系统 OpenMPI/UCX 做性能对比与取证，建议在测试前将 MPI.jl 固化为“system MPI”（并在日志打印 libmpi.so 实际路径作为证据）。
 
-（F）本次案例关键配置（来自采集）
-·代码引用：using CUDA, MPI, Oceananigans, Oceananigans.DistributedComputations
-·网格：Nx=100, Ny=100, Nz=50
-·设备：ENV[\"CUDA_VISIBLE_DEVICES\"]=\"0,1\"
-·时间推进：Δt=0.4，stop_time=4hours
-·TimeStepWizard：cfl=0.8, max_change=1.1, max_Δt=0.1minute
+（F）本次案例关键配置（基于你提供的 ChannelFlow 脚本，建议作为“测试包固定口径”）
+·脚本关键行：ENV[\"CUDA_VISIBLE_DEVICES\"]=\"0,1\"；using CUDA; using MPI; using Oceananigans; using Oceananigans.DistributedComputations
+·并行架构：architecture = Distributed(GPU(), partition=Partition(nranks), devices=nothing, communicator=comm)
+  - 口径：每个 MPI rank 绑定 1 张 GPU；nranks = MPI.Comm_size(comm) 即使用 GPU 数（需在日志中打印 rank/nranks 与 GPU 名称）。
+·网格：RectilinearGrid(architecture, size=(Nx, Ny, Nz), extent=(π*H, π*H, H), halo=(4,4,4))
+  - H=15 m
+  - Nx=100, Ny=100, Nz=50（当前配置；招标测试可按资源固定为更大规模，但必须统一口径）
+·模型：NonhydrostaticModel
+  - advection = WENO(order=9)
+  - timestepper = :RungeKutta3
+  - tracers = (:T, :S)
+  - buoyancy = SeawaterBuoyancy()
+  - closure = AnisotropicMinimumDissipation()
+  - forcing: (u = Fx), 其中 Fx(x,y,z,t)=u★^2/H，u★=0.01
+  - 边界条件：
+    * 底部：u,v 使用基于阻力系数的 FluxBoundaryCondition（drag_u/drag_v），cᴰᵇ=(κ/log(z1/z0))^2，κ=0.4，z0=0.01 m
+    * T,S：顶/底均为 0 通量
+·初始场：u,v,w 带随机扰动；T=290K；S=35 PSU（注意：随机扰动需固定 seed，否则不同运行不可复核）
+·时间推进：
+  - Simulation(model, Δt=0.4, stop_time=4hours)
+  - TimeStepWizard(cfl=0.8, max_change=1.1, max_Δt=0.1minute)，每 10 step 更新
+·输出：
+  - JLD2Writer 输出 (u,v,w) 到 \"ChannelFlow_Velocity.jld2\"，schedule = TimeInterval(2hours)
+·计时（脚本现状）：
+  - 使用 start_time=time(); run!(simulation); end_time=time() 计算 elapsed_time（秒）
+  - 建议同时打印 MAIN_START/MAIN_END 时间戳，并补充吞吐计算（见 2.3 与 4.1）
 
 2.3 性能计时口径（必须遵循）
 ·仅统计“主模拟段 wall time”（从进入 time-stepping loop 开始到正常结束），不包含排队时间。
@@ -121,22 +141,21 @@ Oceananigans 多卡并行 Channel Flow（LES）适配性测试与性能测试方
 3.1 测试目标
 验证 Oceananigans 在投标人集群上可成功运行多节点多 GPU 并行的 Channel Flow LES 案例，且输出结构与关键统计结果正常、可追溯。
 
-3.2 测试配置（基准）
-（1）算例：不可压缩湍流通道流（x/z 周期，y 固壁无滑移）。
-（2）LES 闭合：WALE（或采购方指定闭合；投标人必须声明）。
-（3）Re 数：建议 Re_τ=180（POC 友好）。
-（4）域尺寸（示例）：Lx=2πδ，Ly=2δ，Lz=πδ。
-（5）网格（示例）：Nx×Ny×Nz=256×192×256（采购方可按资源调整并固定）。
-（6）并行规模（强制）：≥2 节点、总 GPU 数 ≥4。
-（7）运行时长：固定步数（示例 5000 steps）或固定物理时间；以稳定跑完并产出统计为准。
-（8）输出：至少 1 份场输出 + 统计输出（速度剖面、壁面摩擦/阻力、散度检查等）。
-（9）I/O 约束：适配性测试允许低频输出 1 份三维场（或 1 份切片/瞬时场），同时必须输出统计（profile/摩擦/散度等）；避免一次性写出大量文件导致跑不完。
+3.2 测试配置（基准，以你提供脚本为准）
+（1）算例：Oceananigans 非静力（Nonhydrostatic）“槽道流/水道流”测试，水平 x/y 周期，z 方向深度 H，底部阻力边界（drag），顶/底 T/S 为零通量。
+（2）物理/闭合：SeawaterBuoyancy + tracers(:T,:S) + AnisotropicMinimumDissipation；u 方向恒定体力 Fx=u★^2/H（u★=0.01）。
+（3）数值格式：WENO(order=9)；timestepper=:RungeKutta3；TimeStepWizard(cfl=0.8,max_change=1.1,max_Δt=0.1minute)。
+（4）域与网格：H=15m；extent=(πH, πH, H)；halo=(4,4,4)；基准网格 Nx=100,Ny=100,Nz=50（若上调规模必须统一口径并在测试包固定）。
+（5）并行规模（强制）：≥2 节点、总 GPU 数 ≥4；每 rank 绑定 1 GPU，nranks=GPU 数。
+（6）模拟时长：stop_time=4hours（脚本已固定）；如采购方要求更长以稳定计时，可在测试包中统一调整（不得投标人自行缩短）。
+（7）输出：JLD2Writer 输出速度场 (u,v,w) 至 ChannelFlow_Velocity.jld2，输出间隔 2hours；同时必须输出统计/检查项（散度、速度幅值、wall time）。
 
 3.2.1 固定参数（建议在测试包中给出并强制）
-（1）时间推进：指定时间积分器（如 RK3）与 CFL 安全系数上限（例如 CFL<=0.8）。
-（2）亚格子闭合：WALE/Smagorinsky 的参数（如 Cw、Cs），必须在日志中打印。
-（3）壁面条件：无滑移 + 不渗透；粘性系数/雷诺数口径必须一致（通过 u_tau 或 bulk velocity 定义需明确）。
-（4）并行分解：建议只在 x/z 做二维分解（x×z pencils），并明确分解维度与每维进程数（Px,Pz）。
+（1）时间推进：timestepper=:RungeKutta3；TimeStepWizard 参数 cfl=0.8,max_change=1.1,max_Δt=0.1minute；回调间隔 IterationInterval(10)。
+（2）对流格式：WENO(order=9)。
+（3）闭合/浮力：AnisotropicMinimumDissipation + SeawaterBuoyancy；tracers 固定为 (:T,:S)。
+（4）底部阻力：z0=0.01m，κ=0.4；cᴰᵇ=(κ/log(z1/z0))^2，drag_u/drag_v 形式保持一致；必须在日志打印 cᴰᵇ 数值与 z1。
+（5）随机扰动：必须固定 RNG seed（例如 StableRNGs/Random.seed!），否则集合/复测不可复核。
 
 3.2.2 目录与命名规范（建议强制）
 ·CASE_ROOT：源码/依赖/脚本目录，必须可直接复现运行。

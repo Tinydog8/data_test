@@ -78,6 +78,23 @@ libmpi.so 路径: ~/.julia/artifacts/.../lib/libmpi.so
 Simulation: Δt=0.4, stop_time=4hours
 TimeStepWizard: cfl=0.8, max_change=1.1, max_Δt=0.1minute
 
+补充（来自你提供的完整 ChannelFlow 脚本配置）
+并行架构: Oceananigans.DistributedComputations.Distributed(GPU()) + MPI communicator=COMM_WORLD
+并行口径: 1 MPI rank 绑定 1 GPU；GPU 数 = MPI ranks (nranks)
+网格: RectilinearGrid(size=(Nx,Ny,Nz), extent=(π*H, π*H, H), halo=(4,4,4)), H=15m
+模型: NonhydrostaticModel
+  advection: WENO(order=9)
+  timestepper: RungeKutta3
+  tracers: T, S
+  buoyancy: SeawaterBuoyancy()
+  closure: AnisotropicMinimumDissipation()
+  forcing: u = Fx = u★^2/H, u★=0.01
+  boundary conditions:
+    bottom u/v: drag flux (z0=0.01m, κ=0.4, cᴰᵇ=(κ/log(z1/z0))^2)
+    T/S top&bottom: zero flux
+输出: JLD2Writer 输出 (u,v,w) 到 ChannelFlow_Velocity.jld2，每 2hours 输出一次
+注意: 初始条件使用 randn() 扰动，正式测试建议固定 RNG seed 以保证可复核
+
 9) 风险/注意事项（建议纳入报告“备注”）
 1. 当前 GPU 型号混用（A800 80GB 与 A100 40GB），若跨 GPU 做扩展测试，建议保证同一作业内 GPU 同型号/同显存，或明确调度策略。
 2. 当前有 GPU 显示被占用（nvidia-smi processes 列表），正式性能测试建议独占资源并记录当时 GPU-Util/进程占用。
