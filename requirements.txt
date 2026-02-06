@@ -1,0 +1,8 @@
+requests
+tqdm
+numpy
+scipy
+rasterio
+shapely
+pyproj
+

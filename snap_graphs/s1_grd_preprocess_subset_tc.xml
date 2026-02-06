@@ -1,0 +1,90 @@
+<graph id="S1_GRD_Preprocess_Subset_TC">
+  <version>1.0</version>
+
+  <!-- Parameters passed by `gpt`:
+       -Pinput=...        (Sentinel-1 GRD .zip)
+       -PsubsetWKT=...    (WKT polygon in EPSG:4326)
+       -Poutput=...       (GeoTIFF path)
+  -->
+
+  <node id="Read">
+    <operator>Read</operator>
+    <parameters>
+      <file>${input}</file>
+    </parameters>
+  </node>
+
+  <node id="Apply-Orbit-File">
+    <operator>Apply-Orbit-File</operator>
+    <sources>
+      <sourceProduct refid="Read"/>
+    </sources>
+    <parameters>
+      <continueOnFail>true</continueOnFail>
+    </parameters>
+  </node>
+
+  <node id="Calibration">
+    <operator>Calibration</operator>
+    <sources>
+      <sourceProduct refid="Apply-Orbit-File"/>
+    </sources>
+    <parameters>
+      <outputSigmaBand>true</outputSigmaBand>
+      <outputBetaBand>false</outputBetaBand>
+      <outputGammaBand>false</outputGammaBand>
+      <outputImageScaleInDb>true</outputImageScaleInDb>
+      <selectedPolarisations>VV</selectedPolarisations>
+    </parameters>
+  </node>
+
+  <node id="Speckle-Filter">
+    <operator>Speckle-Filter</operator>
+    <sources>
+      <sourceProduct refid="Calibration"/>
+    </sources>
+    <parameters>
+      <filter>Lee</filter>
+      <filterSizeX>5</filterSizeX>
+      <filterSizeY>5</filterSizeY>
+    </parameters>
+  </node>
+
+  <node id="Terrain-Correction">
+    <operator>Terrain-Correction</operator>
+    <sources>
+      <sourceProduct refid="Speckle-Filter"/>
+    </sources>
+    <parameters>
+      <demName>SRTM 3Sec</demName>
+      <pixelSpacingInMeter>40.0</pixelSpacingInMeter>
+      <mapProjection>EPSG:4326</mapProjection>
+      <nodataValueAtSea>false</nodataValueAtSea>
+      <saveSelectedSourceBand>true</saveSelectedSourceBand>
+      <saveSigmaNought>true</saveSigmaNought>
+    </parameters>
+  </node>
+
+  <node id="Subset">
+    <operator>Subset</operator>
+    <sources>
+      <sourceProduct refid="Terrain-Correction"/>
+    </sources>
+    <parameters>
+      <geoRegion>${subsetWKT}</geoRegion>
+      <copyMetadata>true</copyMetadata>
+    </parameters>
+  </node>
+
+  <node id="Write">
+    <operator>Write</operator>
+    <sources>
+      <sourceProduct refid="Subset"/>
+    </sources>
+    <parameters>
+      <file>${output}</file>
+      <formatName>GeoTIFF</formatName>
+    </parameters>
+  </node>
+</graph>
+
