@@ -1,0 +1,661 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,bm}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{mathtools}
+
+\title{Transfer-function derivation with eddy-viscosity closure}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Problem setting}
+
+We use the same coordinates as in the original note:
+\[
+x:\text{streamwise}, \qquad y:\text{spanwise}, \qquad z:\text{wall-normal},
+\]
+and impose the streamwise-constant assumption
+\[
+\partial_x(\cdot)=0.
+\]
+The wall-normal derivative is denoted by
+\[
+D := \frac{\mathrm d}{\mathrm d z}.
+\]
+
+The starting point is the Craik--Leibovich (CL) equation in non-dimensional form,
+\begin{equation}
+\frac{\partial \bm u}{\partial t}
++(\bm u\cdot\nabla)\bm u
+=-\nabla p
++\frac{1}{La}\,\bm u_s\times \bm\omega
++\frac{1}{Re}\nabla^2\bm u
++\bm f,
+\qquad
+\nabla\cdot\bm u=0,
+\label{eq:cl-original}
+\end{equation}
+where
+\[
+\bm\omega=\nabla\times\bm u,
+\qquad
+\bm u_s=u_s(z)\,\bm e_x.
+\]
+
+In the original article, the nonlinear fluctuation term is absorbed into the external forcing. Here we do \emph{not} do that. Instead, we model the nonlinear term with an eddy viscosity.
+
+\section{Eddy-viscosity closure of the nonlinear term}
+
+Let the velocity be decomposed as
+\[
+\bm u = U(z)\,\bm e_x + \bm u',
+\qquad
+\bm u' = (u,v,w),
+\]
+where \(U(z)\) is the base streamwise velocity. The exact perturbation equation contains the nonlinear term
+\[
+\bm{\mathcal N}
+:=
+-(\bm u'\cdot\nabla)\bm u'
+\quad
+\text{(or equivalently the divergence of the perturbation Reynolds stress).}
+\]
+
+We close it by a Boussinesq-type eddy-viscosity model:
+\begin{equation}
+\mathcal N_i
+\approx
+\partial_j\!\left[
+\nu_t(z)\left(
+\partial_j u_i + \partial_i u_j
+\right)
+\right].
+\label{eq:boussinesq-closure}
+\end{equation}
+
+\subsection{Why can we write $\nu_e=1/Re+\nu_t$?}
+
+This point is purely a matter of non-dimensionalization.
+
+In dimensional variables, the molecular viscous term and the eddy-viscosity closure term have the same differential structure:
+\begin{equation}
+\nu \nabla^2 \bm u
+\qquad\text{and}\qquad
+\nabla\cdot\left[
+\nu_t^*(\nabla \bm u+\nabla \bm u^T)
+\right].
+\label{eq:dimensional-viscous}
+\end{equation}
+Here \(\nu\) is the molecular kinematic viscosity, and \(\nu_t^*\) is the dimensional eddy viscosity. If we non-dimensionalize with velocity scale \(U_0\) and length scale \(L_0\), then
+\[
+\bm x = L_0 \bm x^\dagger,
+\qquad
+t = \frac{L_0}{U_0} t^\dagger,
+\qquad
+\bm u = U_0 \bm u^\dagger,
+\qquad
+\nu_t^* = U_0 L_0 \,\nu_t,
+\]
+where \(\nu_t\) on the right-hand side is now the \emph{dimensionless} eddy viscosity. After dividing the momentum equation by \(U_0^2/L_0\), the two viscous contributions become
+\begin{equation}
+\frac{1}{Re}\nabla^{\dagger 2}\bm u^\dagger
+\qquad\text{and}\qquad
+\nabla^\dagger\cdot\left[
+\nu_t(\nabla^\dagger \bm u^\dagger+\nabla^\dagger \bm u^{\dagger T})
+\right].
+\label{eq:nondim-viscous}
+\end{equation}
+Therefore, in non-dimensional form, \(1/Re\) and \(\nu_t\) play the same role: both are viscosity coefficients multiplying the same kind of diffusive operator. This is why we define the total effective viscosity by
+\begin{equation}
+\nu_e(z)
+:=
+\frac{1}{Re}+\nu_t(z).
+\label{eq:nu-effective}
+\end{equation}
+If \(\nu_t\) were still dimensional, then it could \emph{not} be added directly to \(1/Re\). The sum \(\nu_e=1/Re+\nu_t\) is valid only because \(\nu_t\) here has already been non-dimensionalized using the same scales as the original CL equation.
+
+Then the perturbation equation becomes
+\begin{equation}
+\frac{\partial \bm u'}{\partial t}
++U\,\partial_x \bm u'
++w\,U'(z)\,\bm e_x
+=
+-\nabla p'
++\frac{1}{La}\,\bm u_s\times(\nabla\times \bm u')
++\nabla\cdot\left[
+\nu_e(z)\left(\nabla \bm u'+\nabla \bm u'^{\,T}\right)
+\right]
++\bm f,
+\label{eq:linear-eddy-model}
+\end{equation}
+with
+\[
+\nabla\cdot \bm u'=0.
+\]
+
+\paragraph{Important remark.}
+Equation \eqref{eq:linear-eddy-model} is linear \emph{only if} \(\nu_t\) is treated as a prescribed profile, for example \(\nu_t=\nu_t(z)\). This is the usual ``frozen eddy viscosity'' assumption. If instead \(\nu_t\) is itself a nonlinear functional of the instantaneous perturbation field, such as a Smagorinsky model, then the system remains nonlinear and the transfer-function/eigenvalue framework below is no longer exact unless one linearizes \(\nu_t\) about a reference state.
+
+\section{Component form under the streamwise-constant assumption}
+
+Because \(\partial_x=0\), the continuity equation reduces to
+\begin{equation}
+\partial_y v + D w = 0.
+\label{eq:continuity-physical}
+\end{equation}
+
+To make the structure as close as possible to your original note, we first write the closed perturbation equations component by component. Under the assumptions
+\[
+\bm u = [U(z)+u,v,w],
+\qquad
+\bm u_s=u_s(z)\bm e_x,
+\qquad
+\partial_x(\cdot)=0,
+\]
+the linearized CL system with eddy-viscosity closure reads
+\begin{linenomath*}
+\begin{equation}
+\begin{cases}
+\begin{aligned}
+&\frac{\partial u}{\partial t}+wU'
+=
+\partial_y\!\left(\nu_e\partial_y u\right)
++D\!\left(\nu_e D u\right)
++f_x,
+\\[3pt]
+&\frac{\partial v}{\partial t}
+=
+-\partial_y p
++\partial_y\!\left(2\nu_e\partial_y v\right)
++D\!\left[\nu_e\left(Dv+\partial_y w\right)\right]
++\frac{1}{La}u_s\partial_y u
++f_y,
+\\[3pt]
+&\frac{\partial w}{\partial t}
+=
+-Dp
++\partial_y\!\left[\nu_e\left(\partial_y w+Dv\right)\right]
++D\!\left(2\nu_e Dw\right)
++\frac{1}{La}u_sDu
++f_z,
+\\[3pt]
+&\partial_y v + Dw = 0
+\ .
+\end{aligned}
+\end{cases}
+\label{eq:component-stress-form}
+\end{equation}
+\end{linenomath*}
+
+Equation \eqref{eq:component-stress-form} is the direct component-wise form of the eddy-viscosity closure, before using incompressibility to simplify the viscous terms.
+
+For \(\nu_e=\nu_e(z)\), the modeled viscous operator can then be simplified using \(\partial_y v + Dw=0\). In compact form,
+\[
+\left[\nabla\cdot\left(
+\nu_e(\nabla \bm u'+\nabla \bm u'^{\,T})
+\right)\right]_i
+=
+\nu_e \nabla^2 u_i
++\nu_e' \left(Du_i+\partial_i w\right).
+\]
+Therefore, the three momentum equations become
+\begin{subequations}
+\begin{align}
+\frac{\partial u}{\partial t} + w U'
+&=
+\nu_e\left(\partial_{yy}+D^2\right)u
++\nu_e' D u
++f_x,
+\label{eq:u-physical}
+\\
+\frac{\partial v}{\partial t}
+&=
+-\partial_y p
++\nu_e\left(\partial_{yy}+D^2\right)v
++\nu_e'\left(Dv+\partial_y w\right)
++\frac{1}{La}\,u_s\,\partial_y u
++f_y,
+\label{eq:v-physical}
+\\
+\frac{\partial w}{\partial t}
+&=
+-D p
++\nu_e\left(\partial_{yy}+D^2\right)w
++2\nu_e' D w
++\frac{1}{La}\,u_s\,D u
++f_z.
+\label{eq:w-physical}
+\end{align}
+\end{subequations}
+
+In other words, after using incompressibility, \eqref{eq:component-stress-form} reduces to
+\begin{linenomath*}
+\begin{equation}
+\begin{cases}
+\begin{aligned}
+&\frac{\partial u}{\partial t}+wU'
+=
+\nu_e\left(\partial_{yy}+D^2\right)u
++\nu_e' D u
++f_x,
+\\[3pt]
+&\frac{\partial v}{\partial t}
+=
+-\partial_y p
++\nu_e\left(\partial_{yy}+D^2\right)v
++\nu_e'\left(Dv+\partial_y w\right)
++\frac{1}{La}u_s\partial_y u
++f_y,
+\\[3pt]
+&\frac{\partial w}{\partial t}
+=
+-Dp
++\nu_e\left(\partial_{yy}+D^2\right)w
++2\nu_e'Dw
++\frac{1}{La}u_sDu
++f_z,
+\\[3pt]
+&\partial_y v + Dw = 0
+\ .
+\end{aligned}
+\end{cases}
+\label{eq:component-simplified-form}
+\end{equation}
+\end{linenomath*}
+
+This is the exact analogue of the component form in your original derivation, except that the molecular viscous coefficient \(1/Re\) is replaced by the effective viscosity operator generated by the eddy-viscosity closure.
+
+Compared with the constant-viscosity derivation, the change is clear:
+\begin{itemize}
+\item the nonlinear term no longer enters as part of the forcing;
+\item instead it changes the linear operator through \(\nu_e(z)\), \(\nu_e'(z)\), and later also \(\nu_e''(z)\);
+\item the CL coupling \(u \leftrightarrow w\) caused by the vortex-force term is still present.
+\end{itemize}
+
+\section{Fourier transform in the spanwise direction}
+
+Introduce the Fourier transform in \(y\):
+\[
+a(y,z,t)
+\; \mapsto \;
+\tilde a(k,z,t),
+\qquad
+\partial_y \mapsto ik,
+\qquad
+\Delta := D^2-k^2.
+\]
+Then \eqref{eq:continuity-physical} gives
+\begin{equation}
+ik\,\tilde v + D\tilde w = 0,
+\qquad
+\tilde v = -\frac{D\tilde w}{ik}.
+\label{eq:continuity-fourier}
+\end{equation}
+
+The transformed equations are
+\begin{subequations}
+\begin{align}
+\frac{\partial \tilde u}{\partial t} + U' \tilde w
+&=
+\underbrace{\left(\nu_e \Delta + \nu_e' D\right)}_{=: \mathcal L_u}\tilde u
++\tilde f_x,
+\label{eq:u-fourier}
+\\
+\frac{\partial \tilde v}{\partial t}
+&=
+-ik\tilde p
++\nu_e\Delta \tilde v
++\nu_e'\left(D\tilde v + ik\tilde w\right)
++\frac{ik}{La}\,u_s\,\tilde u
++\tilde f_y,
+\label{eq:v-fourier}
+\\
+\frac{\partial \tilde w}{\partial t}
+&=
+-D\tilde p
++\nu_e\Delta \tilde w
++2\nu_e' D\tilde w
++\frac{1}{La}\,u_s\,D\tilde u
++\tilde f_z.
+\label{eq:w-fourier}
+\end{align}
+\end{subequations}
+
+\section{Modified Orr--Sommerfeld/Squire-type system}
+
+The streamwise equation \eqref{eq:u-fourier} already has the desired form. The nontrivial step is to eliminate \(\tilde p\) and \(\tilde v\) from \eqref{eq:v-fourier}--\eqref{eq:w-fourier}.
+
+\subsection{Pressure elimination}
+
+Apply \(ik\) to \eqref{eq:v-fourier} and \(D\) to \eqref{eq:w-fourier}, then add the two equations. Using
+\[
+ik\,\frac{\partial \tilde v}{\partial t}
++D\,\frac{\partial \tilde w}{\partial t}
+=
+\frac{\partial}{\partial t}(ik\tilde v + D\tilde w)
+=0
+\]
+from continuity, we obtain
+\begin{equation}
+\Delta \tilde p
+=
+ik\,\mathcal A_v + D\,\mathcal A_w
++ik\tilde f_y + D\tilde f_z
++\frac{ik}{La}\,u_s\,ik\tilde u
++\frac{1}{La}D\!\left(u_s D\tilde u\right),
+\label{eq:pressure-poisson}
+\end{equation}
+where
+\begin{equation}
+\mathcal A_v := \nu_e\Delta \tilde v + \nu_e'(D\tilde v + ik\tilde w),
+\qquad
+\mathcal A_w := \nu_e\Delta \tilde w + 2\nu_e' D\tilde w.
+\label{eq:Aw-Av}
+\end{equation}
+
+Now apply \(\Delta\) to \eqref{eq:w-fourier}:
+\begin{equation}
+\frac{\partial \Delta \tilde w}{\partial t}
+=
+-D\Delta \tilde p
++\Delta \mathcal A_w
++\frac{1}{La}\Delta\!\left(u_s D\tilde u\right)
++\Delta \tilde f_z.
+\label{eq:Delta-w-before}
+\end{equation}
+Substituting \eqref{eq:pressure-poisson} into \eqref{eq:Delta-w-before} yields
+\begin{equation}
+\frac{\partial \Delta \tilde w}{\partial t}
+=
+-ik\,D\mathcal A_v
+-k^2 \mathcal A_w
+-ik\,D\tilde f_y
+-k^2 \tilde f_z
++\frac{k^2}{La}\,u_s'\tilde u.
+\label{eq:Delta-w-intermediate}
+\end{equation}
+
+\subsection{Reduction to an operator acting on \(\tilde w\)}
+
+Using \eqref{eq:continuity-fourier},
+\[
+\tilde v = -\frac{D\tilde w}{ik},
+\qquad
+\Delta \tilde v = -\frac{D\Delta \tilde w}{ik},
+\]
+one can reduce the viscous combination in \eqref{eq:Delta-w-intermediate} to
+\begin{equation}
+-ik\,D\mathcal A_v
+-k^2 \mathcal A_w
+=
+\nu_e \Delta^2 \tilde w
++2\nu_e' \Delta D\tilde w
++\nu_e''(D^2+k^2)\tilde w.
+\label{eq:variable-viscous-OS}
+\end{equation}
+Hence the coupled system becomes
+\begin{subequations}
+\begin{align}
+\frac{\partial \tilde u}{\partial t} + U' \tilde w
+&=
+\mathcal L_u \tilde u + \tilde f_x,
+\label{eq:os-u}
+\\
+\frac{\partial \Delta \tilde w}{\partial t}
+&=
+\underbrace{\left[
+\nu_e \Delta^2
++2\nu_e' \Delta D
++\nu_e''(D^2+k^2)
+\right]}_{=:\mathcal L_w}
+\tilde w
+-ikD\tilde f_y
+-k^2\tilde f_z
++\frac{k^2}{La}\,u_s'\tilde u.
+\label{eq:os-w}
+\end{align}
+\end{subequations}
+
+This is the modified Orr--Sommerfeld/Squire-type formulation with eddy-viscosity closure.
+
+\paragraph{Key difference from the original derivation.}
+Originally, the nonlinear term was placed into the forcing and the operators were simply
+\[
+\mathcal L_u = \frac{1}{Re}\Delta,
+\qquad
+\mathcal L_w = \frac{1}{Re}\Delta^2.
+\]
+After eddy-viscosity closure, the forcing no longer contains the modeled nonlinearity; instead the resolvent/eigenvalue operator is replaced by the variable-coefficient operators
+\[
+\mathcal L_u = \nu_e \Delta + \nu_e' D,
+\qquad
+\mathcal L_w = \nu_e \Delta^2 + 2\nu_e' \Delta D + \nu_e''(D^2+k^2).
+\]
+
+\section{Laplace transform and transfer function}
+
+Take the Laplace transform in time:
+\[
+\hat a(k,z,s) := \mathcal L_t\{\tilde a(k,z,t)\},
+\qquad
+\mathcal L_t\left\{\frac{\partial a}{\partial t}\right\}=s\hat a.
+\]
+Then \eqref{eq:os-u}--\eqref{eq:os-w} become
+\begin{subequations}
+\begin{align}
+\left(sI-\mathcal L_u\right)\hat u + U'\hat w
+&=
+\hat f_x,
+\label{eq:laplace-u}
+\\
+\left(s\Delta-\mathcal L_w\right)\hat w
+&=
+-ikD\hat f_y
+-k^2\hat f_z
++\frac{k^2}{La}\,u_s' \hat u.
+\label{eq:laplace-w}
+\end{align}
+\end{subequations}
+
+Solving \eqref{eq:laplace-u} for \(\hat u\),
+\begin{equation}
+\hat u
+=
+\left(sI-\mathcal L_u\right)^{-1}
+\left(
+-U'\hat w + \hat f_x
+\right).
+\label{eq:u-from-w}
+\end{equation}
+Substitute \eqref{eq:u-from-w} into \eqref{eq:laplace-w}:
+\begin{align}
+\Bigl[
+s\Delta-\mathcal L_w
++\frac{k^2}{La}\,u_s'
+\left(sI-\mathcal L_u\right)^{-1}U'
+\Bigr]\hat w
+&=
+-ikD\hat f_y
+-k^2\hat f_z
++\frac{k^2}{La}\,u_s'
+\left(sI-\mathcal L_u\right)^{-1}\hat f_x.
+\label{eq:w-operator-form}
+\end{align}
+
+Define
+\begin{subequations}
+\begin{align}
+G_{1,\nu}(s)
+&:=
+\left(s\Delta-\mathcal L_w\right)^{-1}(-ikD),
+\label{eq:G1}
+\\
+G_{2,\nu}(s)
+&:=
+\left(s\Delta-\mathcal L_w\right)^{-1}(-k^2),
+\label{eq:G2}
+\\
+G_{3,\nu}(s)
+&:=
+\frac{k^2}{La}
+\left(s\Delta-\mathcal L_w\right)^{-1}
+u_s'
+\left(sI-\mathcal L_u\right)^{-1},
+\label{eq:G3}
+\\
+\Gamma_\nu(s)
+&:=
+G_{3,\nu}(s)\,U'.
+\label{eq:Gamma}
+\end{align}
+\end{subequations}
+Then
+\begin{equation}
+\left(I+\Gamma_\nu(s)\right)\hat w
+=
+G_{1,\nu}(s)\hat f_y
++G_{2,\nu}(s)\hat f_z
++G_{3,\nu}(s)\hat f_x,
+\label{eq:w-transfer-pre}
+\end{equation}
+that is,
+\begin{equation}
+\hat w
+=
+\left(I+\Gamma_\nu(s)\right)^{-1}
+\Bigl[
+G_{1,\nu}(s)\hat f_y
++G_{2,\nu}(s)\hat f_z
++G_{3,\nu}(s)\hat f_x
+\Bigr].
+\label{eq:w-transfer-final}
+\end{equation}
+
+Therefore the total transfer operator is
+\begin{equation}
+G_\nu(s)
+:=
+\left(I+\Gamma_\nu(s)\right)^{-1}
+\begin{bmatrix}
+G_{1,\nu}(s) & G_{2,\nu}(s) & G_{3,\nu}(s)
+\end{bmatrix}.
+\label{eq:total-transfer}
+\end{equation}
+Strictly speaking, this is an \emph{operator-valued} transfer function, so the denominator must be written as \(I+\Gamma_\nu(s)\), not merely \(1+\Gamma_\nu(s)\).
+
+\section{Generalized eigenvalue problem}
+
+If we ignore the forcing, the Laplace-domain system gives the generalized eigenvalue problem
+\begin{equation}
+A_\nu \psi = s\,B\,\psi,
+\qquad
+\psi=
+\begin{bmatrix}
+\hat u\\[3pt]
+\hat w
+\end{bmatrix},
+\label{eq:eig-problem}
+\end{equation}
+with
+\begin{equation}
+A_\nu
+=
+\begin{bmatrix}
+\mathcal L_u & -U' I\\[3pt]
+\dfrac{k^2}{La}\,u_s' I & \mathcal L_w
+\end{bmatrix},
+\qquad
+B=
+\begin{bmatrix}
+I & 0\\
+0 & \Delta
+\end{bmatrix}.
+\label{eq:eig-matrices}
+\end{equation}
+This is the direct analogue of your original eigenvalue form, except that
+\[
+\frac{1}{Re}\Delta
+\quad\text{and}\quad
+\frac{1}{Re}\Delta^2
+\]
+must now be replaced by
+\[
+\mathcal L_u = \nu_e \Delta + \nu_e' D,
+\qquad
+\mathcal L_w = \nu_e \Delta^2 + 2\nu_e' \Delta D + \nu_e''(D^2+k^2).
+\]
+
+\section{Two important simplifications}
+
+\subsection{Case 1: constant eddy viscosity}
+
+If \(\nu_t\) is taken as a constant, then \(\nu_e'=\nu_e''=0\), and the whole derivation collapses to the same algebraic structure as the original note:
+\[
+\mathcal L_u = \nu_e \Delta,
+\qquad
+\mathcal L_w = \nu_e \Delta^2.
+\]
+Equivalently, one just replaces
+\[
+\frac{1}{Re}
+\longrightarrow
+\nu_e = \frac{1}{Re}+\nu_t.
+\]
+So in the constant-\(\nu_t\) case, the later derivation does \emph{not} fundamentally change; only the effective viscous damping changes.
+
+\subsection{Case 2: variable but frozen eddy viscosity \(\nu_t=\nu_t(z)\)}
+
+This is the most useful linear extension. The transfer-function and eigenvalue analysis still works, but:
+\begin{itemize}
+\item \(\Delta/Re\) is replaced by \(\mathcal L_u\);
+\item \(\Delta^2/Re\) is replaced by \(\mathcal L_w\);
+\item the resolvent becomes a variable-coefficient operator;
+\item additional terms involving \(\nu_e'\) and \(\nu_e''\) modify both damping and modal structure.
+\end{itemize}
+Therefore, the most amplified spanwise mode and the least stable eigenvalue will generally shift, even if the CL coupling term is unchanged.
+
+\subsection{Case 3: dynamic eddy viscosity \(\nu_t=\nu_t(\bm u')\)}
+
+If \(\nu_t\) depends on the perturbation field itself, then the closure introduces new nonlinearities through \(\delta\nu_t\), and the equations are no longer linear in \((u,v,w)\). In that case:
+\begin{itemize}
+\item the exact transfer function is no longer defined in the linear sense;
+\item the generalized eigenvalue problem \eqref{eq:eig-problem} is no longer exact;
+\item one must first linearize \(\nu_t\) around a reference state, e.g.
+\[
+\nu_t(\bm u') \approx \bar\nu_t(z) + \delta\nu_t,
+\]
+and retain only the terms linear in the perturbation.
+\end{itemize}
+
+\section{Final summary}
+
+If the nonlinear term is closed by an eddy viscosity instead of being absorbed into the forcing, then the subsequent derivation changes in the following way:
+\begin{enumerate}
+\item the modeled nonlinearity moves from the forcing side to the linear operator side;
+\item the streamwise equation changes from
+\[
+\frac{1}{Re}\Delta \tilde u
+\]
+to
+\[
+\mathcal L_u \tilde u
+=
+\left(\nu_e \Delta + \nu_e' D\right)\tilde u;
+\]
+\item the wall-normal Orr--Sommerfeld operator changes from
+\[
+\frac{1}{Re}\Delta^2 \tilde w
+\]
+to
+\[
+\mathcal L_w \tilde w
+=
+\left(\nu_e \Delta^2 + 2\nu_e' \Delta D + \nu_e''(D^2+k^2)\right)\tilde w;
+\]
+\item the transfer function is still available under the frozen-\(\nu_t\) assumption, but it must be understood as an operator resolvent;
+\item the generalized eigenvalue problem remains valid under the frozen-\(\nu_t\) assumption, with \(A\) replaced by \(A_\nu\).
+\end{enumerate}
+
+\end{document}
