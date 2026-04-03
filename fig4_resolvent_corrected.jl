@@ -100,6 +100,34 @@ function load_profile_on_grid(csv_path::AbstractString, ydst::AbstractVector)
     return interp_clamp_resolvent(z_src, val_src, ydst), z_src, val_src
 end
 
+function chebyshev_polynomial_matrix(y::AbstractVector, degree::Int, H::Real)
+    x = @. 2.0 * y / H + 1.0
+    M = zeros(Float64, length(y), degree + 1)
+    M[:, 1] .= 1.0
+    if degree >= 1
+        M[:, 2] .= x
+    end
+    for n in 2:degree
+        @views M[:, n + 1] .= 2.0 .* x .* M[:, n] .- M[:, n - 1]
+    end
+    return M
+end
+
+function smooth_profile_chebfit(
+    z_src::AbstractVector,
+    v_src::AbstractVector,
+    ydst::AbstractVector,
+    H::Real;
+    degree::Int = 24,
+)
+    deg = min(degree, max(length(z_src) - 1, 0))
+    deg >= 1 || error("用于拟合的源点太少")
+    A = chebyshev_polynomial_matrix(z_src, deg, H)
+    c = A \ Float64.(v_src)
+    B = chebyshev_polynomial_matrix(ydst, deg, H)
+    return B * c
+end
+
 function weighted_resolvent_modes(T::AbstractMatrix, w_y::AbstractVector)
     wi = 1.0 ./ sqrt.(w_y)
     ws = sqrt.(w_y)
@@ -133,10 +161,8 @@ function main()
     g_rect = build_rect_grid(N_demo, H_demo)
     @printf("[%s] sum(w_y)=%.12f (应≈H=%.6f)\n", RECT_COLLOC_STAMP, sum(g_rect.w_y_int), H_demo)
 
-    ULv_csv, z_u, UL_src = load_profile_on_grid(vel_csv, g_rect.y_v)
-    ULw_csv = interp_clamp_resolvent(z_u, UL_src, g_rect.y_w)
-    nuTv, z_nu, nu_src = load_profile_on_grid(nu_csv, g_rect.y_v)
-    nuTw = interp_clamp_resolvent(z_nu, nu_src, g_rect.y_w)
+    _, z_u, UL_src = load_profile_on_grid(vel_csv, g_rect.y_v)
+    _, z_nu, nu_src = load_profile_on_grid(nu_csv, g_rect.y_v)
 
     # Paper §2.2: prescribed deep-water monochromatic Stokes drift.
     y_over_H_v = g_rect.y_v ./ H_demo
@@ -148,16 +174,20 @@ function main()
     # The linear operator still needs both U^L for advection and the Eulerian
     # mean U (through U' and U''). Reconstruct U from U^L - U^s by default.
     if VELOCITY_CSV_IS_LAGRANGIAN
-        ULv = ULv_csv
-        ULw = ULw_csv
-        Uv = ULv .- Usv
-        Uw = ULw .- Usw
+        Uv_from_csv = smooth_profile_chebfit(z_u, UL_src, g_rect.y_v, H_demo) .- Usv
+        Uw_from_csv = smooth_profile_chebfit(z_u, UL_src, g_rect.y_w, H_demo) .- Usw
     else
-        Uv = ULv_csv
-        Uw = ULw_csv
-        ULv = Uv .+ Usv
-        ULw = Uw .+ Usw
+        Uv_from_csv = smooth_profile_chebfit(z_u, UL_src, g_rect.y_v, H_demo)
+        Uw_from_csv = smooth_profile_chebfit(z_u, UL_src, g_rect.y_w, H_demo)
     end
+
+    nuTv = smooth_profile_chebfit(z_nu, nu_src, g_rect.y_v, H_demo)
+    nuTw = smooth_profile_chebfit(z_nu, nu_src, g_rect.y_w, H_demo)
+
+    Uv = copy(Uv_from_csv)
+    Uw = copy(Uw_from_csv)
+    ULv = Uv .+ Usv
+    ULw = Uw .+ Usw
 
     dUv = g_rect.Dv * Uv
     d2Uv = g_rect.D2v * Uv
@@ -174,8 +204,12 @@ function main()
     isurf_v = argmax(g_rect.y_v)
     @printf("Loaded %d velocity points, %d nu_T points\n", length(z_u), length(z_nu))
     @printf("Velocity CSV interpreted as %s\n", VELOCITY_CSV_IS_LAGRANGIAN ? "U^L(y)" : "Eulerian U(y)")
+    @printf("Profiles are Chebyshev-smoothed before differentiation to suppress boundary noise in U'', nu_T'', and derived modes\n")
+    @printf("If the CSVs were digitised from plotted curves rather than exported LES arrays, noticeable discrepancies from the paper's Fig.4 can remain even with a correct discretisation.\n")
     @printf("Surface values: U(y=0)=%.4f, U^s(y=0)=%.4f, U^L(y=0)=%.4f\n",
         Uv[isurf_v], Usv[isurf_v], ULv[isurf_v])
+    @printf("Derivative diagnostics: max|U'|=%.4e, max|U''|=%.4e, max|nu_T'|=%.4e, max|nu_T''|=%.4e\n",
+        maximum(abs, dUv), maximum(abs, d2Uv), maximum(abs, dnuTv), maximum(abs, d2nuTv))
 
     kx = 0.0
     kz = 2 * pi / H_demo

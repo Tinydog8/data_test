@@ -30,19 +30,25 @@ function chebyshev_first_kind_nodes(n::Integer)
     return -cos.((j .+ 0.5) .* pi ./ n)
 end
 
-function barycentric_weights(x::AbstractVector{<:Real})
-    n = length(x)
+function chebyshev_second_kind_barycentric_weights(n::Integer)
+    n >= 2 || error("second-kind Chebyshev nodes require n >= 2")
     λ = ones(Float64, n)
+    λ[1] = 0.5
+    λ[end] = 0.5
     for j in 1:n
-        xj = Float64(x[j])
-        prod = 1.0
-        for k in 1:n
-            k == j && continue
-            prod *= (xj - Float64(x[k]))
-        end
-        λ[j] = inv(prod)
+        isodd(j - 1) && (λ[j] = -λ[j])
     end
-    λ ./= maximum(abs, λ)
+    return λ
+end
+
+function chebyshev_first_kind_barycentric_weights(n::Integer)
+    n >= 1 || error("first-kind Chebyshev nodes require n >= 1")
+    λ = zeros(Float64, n)
+    for j in 1:n
+        θj = (j - 0.5) * pi / n
+        λ[j] = sin(θj)
+        isodd(j - 1) && (λ[j] = -λ[j])
+    end
     return λ
 end
 
@@ -132,9 +138,9 @@ function build_rect_grid(N::Integer, H::Real)
     x_w = chebyshev_second_kind_nodes(Nw)
     x_int = chebyshev_first_kind_nodes(N)
 
-    λ_v = barycentric_weights(x_v)
-    λ_w = barycentric_weights(x_w)
-    λ_int = barycentric_weights(x_int)
+    λ_v = chebyshev_second_kind_barycentric_weights(Nv)
+    λ_w = chebyshev_second_kind_barycentric_weights(Nw)
+    λ_int = chebyshev_first_kind_barycentric_weights(N)
 
     Dv_ref = differentiation_matrix(x_v, λ_v)
     Dw_ref = differentiation_matrix(x_w, λ_w)
@@ -240,7 +246,7 @@ function transfer_gain_rect(
         ikx .* Diagonal(Float64.(d2Uv)) +
         Diagonal(Float64.(nuTv)) * (Δv * Δv) +
         2.0 .* Diagonal(Float64.(dnuTv)) * g.Dv * Δv +
-        2.0 .* Diagonal(Float64.(d2nuTv)) * (g.D2v + k2 .* Iv)
+        Diagonal(Float64.(d2nuTv)) * (g.D2v + k2 .* Iv)
     )
     LSq = g.Pw * (
         -ikx .* Diagonal(ULw) +
