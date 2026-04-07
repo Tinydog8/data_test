@@ -270,13 +270,16 @@ function transfer_gain_rect(
     A[(N + 1):(2N), 1:Nv] = -L21
     A[(N + 1):(2N), (Nv + 1):end] = im * Float64(omega) .* E22 - LSq
 
-    # Boundary conditions: v = D^2 v = 0, Dω_y = 0 at y = 0 and y = -H.
-    A[(2N + 1), 1:Nv] = Iv[1, :]
-    A[(2N + 2), 1:Nv] = Iv[end, :]
-    A[(2N + 3), 1:Nv] = g.D2v[1, :]
-    A[(2N + 4), 1:Nv] = g.D2v[end, :]
-    A[(2N + 5), (Nv + 1):end] = g.Dw[1, :]
-    A[(2N + 6), (Nv + 1):end] = g.Dw[end, :]
+    # Mixed boundary conditions:
+    #   bottom y = -H: no-slip      -> v = 0, Dv = 0, ω_y = 0
+    #   top    y =  0: stress-free -> v = 0, D²v = 0, Dω_y = 0
+    # The second-kind grids are ordered from y = -H (index 1) to y = 0 (index end).
+    A[(2N + 1), 1:Nv] = Iv[1, :]          # v(-H) = 0
+    A[(2N + 2), 1:Nv] = Iv[end, :]        # v(0)  = 0
+    A[(2N + 3), 1:Nv] = g.Dv[1, :]        # Dv(-H) = 0
+    A[(2N + 4), 1:Nv] = g.D2v[end, :]     # D²v(0) = 0
+    A[(2N + 5), (Nv + 1):end] = Iw[1, :]      # ω_y(-H) = 0
+    A[(2N + 6), (Nv + 1):end] = g.Dw[end, :]  # Dω_y(0) = 0
 
     Dv_int = g.Pv * g.Dv
 
