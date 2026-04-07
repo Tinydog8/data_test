@@ -26,28 +26,25 @@
 - \(v\)：垂向速度扰动
 - \(\omega_y\)：垂向涡量扰动
 
-在对 \((x,z,t)\) 做 Fourier 变换后，单个 \((k_x,k_z,\omega)\) 模式满足
+在对 \((x,z,t)\) 做 Fourier 变换后，单个 \((k_x,k_z,\omega)\) 模式满足论文公式 (2.9)：
 
 \[
--(i\omega E + F)\hat{\xi} = B \hat d ,
-\tag{2.9}
+-(i\omega E + F)\hat{\xi} = B \hat d .
 \]
 
-并通过
+并通过论文公式 (2.17)
 
 \[
 \hat u = C \hat \xi
-\tag{2.17}
 \]
 
 得到三分量速度响应 \(\hat u = [\hat u,\hat v,\hat w]^T\)。
 
-文中也写成传递算子形式：
+文中也写成传递算子形式（论文公式 (2.19)）：
 
 \[
 \hat u = T \hat d, \qquad
 T = C(i\omega E - F)^{-1}B .
-\tag{2.19}
 \]
 
 你的代码目标就是离散这个 \(T\)。
@@ -85,16 +82,14 @@ T = C(i\omega E - F)^{-1}B .
 - PDE 本体在 \(N\) 个 first-kind Chebyshev 点上 enforce
 - 再附加 \(m\) 个边界条件
 
-对应公式：
+对应附录 B 的公式 (B3) 与 (B4)：
 
 \[
 x_j = -\cos\left(\frac{j\pi}{N+m-1}\right), \qquad j=0,\dots,N+m-1
-\tag{B3}
 \]
 
 \[
 \check x_j = -\cos\left(\frac{(j+1/2)\pi}{N}\right), \qquad j=0,\dots,N-1
-\tag{B4}
 \]
 
 ---
@@ -180,11 +175,10 @@ y = -\frac{H}{2}(x+1)
 将 first-kind interior forcing 网格插值到 second-kind 网格，用于组装输入算子 \(B\)。
 
 #### `w_y_int`
-离散的能量权重，用于近似论文中的能量内积
+离散的能量权重，用于近似论文公式 (2.21) 中的能量内积
 
 \[
 \langle f,g \rangle_E = \int_{-H}^0 g^* f\,dy .
-\tag{2.21}
 \]
 
 你当前实现使用 \(\theta\)-空间中点法则：
@@ -297,17 +291,18 @@ I_wv = barycentric_interp_matrix(collect(xi_v), collect(xi_w))
 
 论文给出的频域算子块为：
 
+论文公式 (2.11) 为：
 \[
 F=
 \begin{bmatrix}
 L_{OS} & -ik_z U^{s\prime}\\
 -ik_z U' & L_{Sq}
 \end{bmatrix}.
-\tag{2.11}
 \]
 
 其中
 
+论文公式 (2.13) 为：
 \[
 L_{OS}
 =
@@ -316,16 +311,15 @@ L_{OS}
 +\nu_T \hat\Delta^2
 +2\nu_T' D\hat\Delta
 +\nu_T''(D^2+k^2I),
-\tag{2.13}
 \]
 
+论文公式 (2.14) 为：
 \[
 L_{Sq}
 =
 -ik_x U^L
 +\nu_T \hat\Delta
 +\nu_T' D.
-\tag{2.14}
 \]
 
 ---
@@ -483,7 +477,6 @@ u
 Pf\\
 g
 \end{bmatrix}.
-\tag{B6}
 \]
 
 ---
@@ -495,7 +488,6 @@ g
 \[
 \hat v = D^2\hat v = D\hat\omega_y = 0
 \quad \text{at } y=0,-H.
-\tag{2.15)–(2.16}
 \]
 
 而你当前这版实现使用的是**混合边界条件**：
@@ -542,7 +534,6 @@ B=
 -ik_x D & -k^2 & -ik_z D\\
 ik_z & 0 & -ik_x
 \end{bmatrix}.
-\tag{2.12}
 \]
 
 你的代码中，先在 second-kind 网格上构造，再插值到 interior 点：
@@ -580,7 +571,6 @@ ik_x D & -ik_z \\
 k^2 & 0 \\
 ik_z D & ik_x
 \end{bmatrix}.
-\tag{2.18}
 \]
 
 你的代码中：
@@ -633,7 +623,6 @@ G(k_x,k_z,\omega)
 \max_{\hat d \neq 0}
 \frac{\|\hat u\|_E^2}{\|\hat d\|_E^2}
 = \sigma_1^2.
-\tag{3.1}
 \]
 
 注意：`transfer_gain_rect` 返回的 `s1` 是 **Euclidean SVD** 下的最大奇异值。  
@@ -662,7 +651,6 @@ end
 
 \[
 \|f\|_E^2 = \int_{-H}^0 f^* f \,dy.
-\tag{2.21}
 \]
 
 ---
