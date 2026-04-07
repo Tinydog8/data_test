@@ -731,3 +731,258 @@ T = C M^{-1} B
 - imported profile 的导数是不是在原始均匀 LES 网格上算的
 - 当前主导模态是否因底边界 no-slip 而已经偏离论文 Fig.4 的物理类型
 
+---
+
+## 16. 当底边界从 stress-free 改为 no-slip 时，公式和代码分别怎么变
+
+这一节专门总结：
+
+- 论文原始问题：上下边界均为 stress-free
+- 修改后问题：顶部保持 stress-free，底部改为 no-slip
+
+两者在连续方程、\((v,\omega_y)\) 变量形式和代码实现中分别有哪些变化。
+
+---
+
+### 16.1 原论文的边界条件（上下都为 stress-free）
+
+正文 §2.1 给出的物理变量边界条件是：
+
+\[
+\frac{\partial u}{\partial y} = \frac{\partial w}{\partial y} = 0,
+\qquad
+v = 0
+\qquad \text{at } y=0,-H.
+\]
+
+其物理含义是：
+
+- \(v=0\)：无穿透
+- \(\partial_y u = 0\)、\(\partial_y w = 0\)：无切向应力（free-slip / stress-free）
+
+在论文使用的 \((v,\omega_y)\) 状态变量中，这等价于
+
+\[
+\hat v = 0, \qquad D^2 \hat v = 0, \qquad D \hat \omega_y = 0
+\qquad \text{at } y=0,-H.
+\]
+
+也就是说：
+
+- 对四阶的 \(v\)-equation：每个边界给两个条件
+- 对二阶的 \(\omega_y\)-equation：每个边界给一个条件
+
+总共是 \(4+2\) 个边界条件。
+
+---
+
+### 16.2 当底边界改为 no-slip 时，物理变量边界条件如何改变
+
+底边界 \(y=-H\) 若改成 no-slip，则物理变量条件变为
+
+\[
+u = 0, \qquad v = 0, \qquad w = 0
+\qquad \text{at } y=-H.
+\]
+
+顶部 \(y=0\) 若仍保持论文原始设定，则仍然是
+
+\[
+\frac{\partial u}{\partial y} = \frac{\partial w}{\partial y} = 0,
+\qquad
+v = 0
+\qquad \text{at } y=0.
+\]
+
+所以整个问题变成：
+
+- **底部**：no-slip
+- **顶部**：stress-free
+
+这是一个混合边界条件问题。
+
+---
+
+### 16.3 在 \((v,\omega_y)\) 变量中，底部 no-slip 等价于什么
+
+底边界 no-slip 的三个物理条件是
+
+\[
+u=0,\qquad v=0,\qquad w=0.
+\]
+
+在 Fourier 空间中，有不可压缩条件
+
+\[
+ik_x u + Dv + ik_z w = 0.
+\]
+
+若边界上 \(u=w=0\)，则自动得到
+
+\[
+Dv = 0.
+\]
+
+此外，垂向涡量定义为
+
+\[
+\omega_y = \frac{\partial u}{\partial z} - \frac{\partial w}{\partial x}
+= ik_z u - ik_x w.
+\]
+
+在边界上 \(u=w=0\) 时，就有
+
+\[
+\omega_y = 0.
+\]
+
+因此，**底边界 no-slip 在 \((v,\omega_y)\) 变量中的等价条件**是
+
+\[
+v = 0, \qquad Dv = 0, \qquad \omega_y = 0
+\qquad \text{at } y=-H.
+\]
+
+这与论文原来的 stress-free 条件
+
+\[
+v = 0, \qquad D^2 v = 0, \qquad D\omega_y = 0
+\qquad \text{at } y=-H
+\]
+
+相比，变化是：
+
+- \(D^2 v = 0 \;\rightarrow\; Dv = 0\)
+- \(D\omega_y = 0 \;\rightarrow\; \omega_y = 0\)
+
+---
+
+### 16.4 混合边界条件写成完整形式
+
+若底部为 no-slip、顶部为 stress-free，则连续边界条件可写成：
+
+#### 底部 \(y=-H\)
+
+\[
+v=0,\qquad Dv=0,\qquad \omega_y=0.
+\]
+
+#### 顶部 \(y=0\)
+
+\[
+v=0,\qquad D^2v=0,\qquad D\omega_y=0.
+\]
+
+这组条件仍然提供：
+
+- \(v\)-equation 的 4 个条件
+- \(\omega_y\)-equation 的 2 个条件
+
+因此离散系统仍然是闭合的。
+
+---
+
+### 16.5 对应到代码里，边界条件行应该怎样改
+
+如果使用的 second-kind 网格顺序是：
+
+- 首点：海底 \(y=-H\)
+- 末点：海表 \(y=0\)
+
+那么边界条件在代码里应写成：
+
+```julia
+# Mixed boundary conditions:
+#   bottom y = -H: no-slip      -> v = 0, Dv = 0, ω_y = 0
+#   top    y =  0: stress-free -> v = 0, D²v = 0, Dω_y = 0
+
+A[(2N + 1), 1:Nv] = Iv[1, :]          # v(-H) = 0
+A[(2N + 2), 1:Nv] = Iv[end, :]        # v(0)  = 0
+A[(2N + 3), 1:Nv] = g.Dv[1, :]        # Dv(-H) = 0
+A[(2N + 4), 1:Nv] = g.D2v[end, :]     # D²v(0) = 0
+A[(2N + 5), (Nv + 1):end] = Iw[1, :]      # ω_y(-H) = 0
+A[(2N + 6), (Nv + 1):end] = g.Dw[end, :]  # Dω_y(0) = 0
+```
+
+这正对应于：
+
+- 底部 no-slip：`v=0`, `Dv=0`, `ω_y=0`
+- 顶部 stress-free：`v=0`, `D²v=0`, `Dω_y=0`
+
+---
+
+### 16.6 如果使用的是你这份 `build_M_B_C_rect` 风格的代码，该如何理解
+
+在你贴出的那版 `build_M_B_C_rect` 中，边界条件通过 `M` 的若干行附加：
+
+```julia
+M[N+1, :] .= ...
+M[N+2, :] .= ...
+M[N+3, :] .= ...
+M[N+4, :] .= ...
+M[Nv+N+1, :] .= ...
+M[Nv+Nw, :] .= ...
+```
+
+这里的思想和上面完全一样：
+
+- 前 4 条给 \(v\)
+- 后 2 条给 \(\omega_y\)
+
+只不过你需要根据数组端点和物理边界的方向，确定：
+
+- 哪个端点是海底
+- 哪个端点是海表
+
+然后把：
+
+- 底部的 \(D^2v\) 条件改成 \(Dv\)
+- 底部的 \(D\omega_y\) 条件改成 \(\omega_y\)
+
+而顶部仍保留论文原始的 stress-free 条件。
+
+---
+
+### 16.7 物理影响：为什么改成 no-slip 后主模态常常会变
+
+底部从 stress-free 改成 no-slip，不只是“换两个边界条件行”这么简单，它还会改变主导 resolvent mode 的物理类型。
+
+常见后果包括：
+
+- 更容易出现靠近底边界的 streak / wall mode
+- 流向分量 \(u\) 更强
+- 跨流和竖向分量 \(v,w\) 相对减弱
+- 主导模态不再像论文 Fig.4 那样成长为贯穿全水深的对流滚涡
+
+因此，如果你的目标是严格复现论文 Fig.4 的 full-depth Langmuir roll，
+那么不应把底边界改为 no-slip。
+
+---
+
+### 16.8 一句话总结
+
+底边界从 stress-free 改为 no-slip 时：
+
+- **连续公式层面**：底部由
+  \[
+  \partial_y u = \partial_y w = 0,\; v=0
+  \]
+  改为
+  \[
+  u=w=v=0
+  \]
+- **\((v,\omega_y)\) 变量层面**：底部由
+  \[
+  v=0,\; D^2v=0,\; D\omega_y=0
+  \]
+  改为
+  \[
+  v=0,\; Dv=0,\; \omega_y=0
+  \]
+- **代码层面**：把底部边界对应的两条
+  `D2v[...]` 和 `Dw[...]`
+  分别替换为
+  `Dv[...]` 和 `Iw[...]`
+
+而顶部若保持论文原设定，则仍然是 stress-free，不变。
+
