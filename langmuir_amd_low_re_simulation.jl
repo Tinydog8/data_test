@@ -16,8 +16,9 @@ using Printf
 const H = 25.0 # m, water depth
 const architecture = GPU()
 
-# Lower the Reynolds number by prescribing a larger molecular viscosity through
-# a target friction Reynolds number Reτ = u★ H / νₘ.
+# Lower the Reynolds number by keeping the molecular viscosity at a physical
+# seawater value and adjusting the friction velocity u★ so that
+# Reτ = u★ H / νₘ matches the target value.
 const Reτ_target = 250.0
 
 grid = RectilinearGrid(architecture, size = (600, 600, 100), extent = (600, 600, H))
@@ -43,15 +44,16 @@ uˢ(z) = Uˢ * cosh(2 * wavenumber * (z + H)) / (2 * (sinh(wavenumber * H))^2)
 # Wind stress, pressure gradient, and bottom drag
 # ---------------------------------
 
-const avg_u₁₀ = 8.0
-const cᴰʷ = (0.75 + 0.067 * avg_u₁₀) * 1e-3
-const ρₐ = 1.225
 const ρₒ = 1026.0
-const Qᵘ = -ρₐ / ρₒ * cᴰʷ * avg_u₁₀ * abs(avg_u₁₀)
-const u★ = sqrt(abs(Qᵘ))
+
+# Approximate physical kinematic viscosity of seawater near room temperature.
+const νₘ = 1.05e-6
+
+# Set the surface stress through the target friction Reynolds number.
+const u★ = Reτ_target * νₘ / H
+const Qᵘ = -u★^2
 const Lat = sqrt(u★ / Uˢ)
 
-const νₘ = u★ * H / Reτ_target
 const κₘ = (T = 0.0, S = 0.0)
 
 const up = 0.01
@@ -84,12 +86,12 @@ data = Dict(
     "kH" => kH,
     "Wave amplitude" => amplitude,
     "Wave length" => wavelength,
-    "Wind velocity" => avg_u₁₀,
     "PGF velocity" => up,
     "PGF" => PGF,
     "u_star" => u★,
     "Re_tau_target" => Reτ_target,
     "molecular_viscosity" => νₘ,
+    "surface_stress_Q_u" => Qᵘ,
 )
 
 df_data = DataFrame(data)
@@ -134,9 +136,9 @@ model = NonhydrostaticModel(; grid, coriolis,
 
 Ξ(z) = randn() * exp(z / 4)
 
-uᵢ(x, y, z) = 1e-4 * Ξ(z)
-vᵢ(x, y, z) = 1e-4 * Ξ(z)
-wᵢ(x, y, z) = 1e-6 * Ξ(z)
+uᵢ(x, y, z) = 1e-2 * u★ * Ξ(z)
+vᵢ(x, y, z) = 1e-2 * u★ * Ξ(z)
+wᵢ(x, y, z) = 1e-4 * u★ * Ξ(z)
 Tᵢ(x, y, z) = dTdz * z + 1e-8 * Ξ(z) + 290
 Sᵢ = 35.0
 
