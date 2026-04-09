@@ -54,8 +54,6 @@ const u★ = Reτ_target * νₘ / H
 const Qᵘ = -u★^2
 const Lat = sqrt(u★ / Uˢ)
 
-const κₘ = (T = 0.0, S = 0.0)
-
 const up = 0.01
 const PGF = up^2 / H
 Fx(x, y, z, t) = PGF
@@ -117,8 +115,11 @@ S_bcs = FieldBoundaryConditions(top = FluxBoundaryCondition(0.0),
 
 coriolis = nothing
 
-# Keep AMD as requested, but include the molecular viscosity explicitly through ν.
-closure = AnisotropicMinimumDissipation(ν = νₘ, κ = κₘ)
+# Keep AMD as requested. Many Oceananigans versions assume seawater molecular
+# viscosity / diffusivity by default for AMD, while only some versions expose
+# ν and κ as constructor keywords. Using the bare constructor is therefore the
+# most version-compatible way to keep physical molecular properties here.
+closure = AnisotropicMinimumDissipation()
 
 model = NonhydrostaticModel(; grid, coriolis,
                             advection = WENO(),
