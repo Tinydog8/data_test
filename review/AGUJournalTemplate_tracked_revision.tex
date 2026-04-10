@@ -1,0 +1,447 @@
+\documentclass[draft]{agujournal2019}
+\usepackage{url}
+\usepackage{lineno}
+\usepackage[inline]{trackchanges}
+\usepackage{soul}
+\usepackage{bm}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{amsmath}
+\usepackage{floatrow}
+\usepackage{multirow}
+\usepackage{gensymb}
+
+\RequirePackage{apacite}
+\let\cite\shortcite
+\let\citet\shortciteA
+\RequirePackage{url}
+\linenumbers
+\draftfalse
+
+\addeditor{AI}
+
+\journalname{JGR: Oceans}
+
+\begin{document}
+
+\title{\change[AI]{Diurnal Modulation of Coastal Dual-Boundary Layer Turbulence Under Periodic Forcing}{Diurnal Controls on Boundary-Layer Overlap and Full-Column Turbulence in Shallow Coastal Oceans}}
+
+\authors{J. Huang\affil{1}, M. Chamecki\affil{2}, Q. Li\affil{3}, B. Chen\affil{1}}
+
+\affiliation{1}{State Key Laboratory of Marine Environmental Science, Department of Physical Oceanography, College of Ocean and Earth Sciences, Xiamen University, Xiamen, China}
+\affiliation{2}{Department of Atmospheric and Oceanic Sciences, University of California Los Angeles, Los Angeles, USA}
+\affiliation{3}{Earth, Ocean and Atmospheric Sciences Thrust, The Hong Kong University of Science and Technology (Guangzhou), Guangzhou, China}
+
+\correspondingauthor{Bicheng Chen}{bchen@xmu.edu.cn}
+
+\begin{keypoints}
+\item \change[AI]{Diurnal forcing drives three distinct types of coastal dual-boundary layers: fully separated, once-overlap, and twice-overlap per day.}{Diurnal forcing organizes coastal dual-boundary layers into three regimes that are fully separated or overlap once or twice per day.}
+\item \change[AI]{Full-column turbulence develops during boundary layers merge and disappears when they separate.}{Full-column turbulence develops when the surface and bottom boundary layers merge and weakens after they separate.}
+\item \change[AI]{Boundary layers merge is controlled by both stratification and the alignment of tidal currents with wind-waves.}{Boundary-layer overlap is jointly controlled by water-column stratification and the alignment among tides wind and waves.}
+\end{keypoints}
+
+\begin{abstract}
+\change[AI]{Turbulent mixing in oceans plays a critical role in regulating air-sea exchanges, diapycnal transport, and sediment resuspension, with significant implications for marine environmental and climate processes.}{Turbulent mixing in shallow coastal oceans regulates air-sea exchange diapycnal transport and sediment resuspension.}
+\change[AI]{In the ocean, turbulence is predominantly active within the wind and wave driven surface boundary layer (SBL) and the current driven bottom boundary layer (BBL).}{In many coastal settings turbulence is concentrated within the wind- and wave-driven surface boundary layer and the current-driven bottom boundary layer.}
+\change[AI]{Under shallow water conditions, the SBL and BBL can interact strongly and even merge into a single layer, though the physical mechanisms controlling such interactions, particularly under diurnal forcings, remain poorly understood.}{Because the water column is shallow these two boundary layers can interact and even merge, yet the mechanisms controlling their interaction under diurnal forcing remain insufficiently understood.}
+\change[AI]{In this study, the large eddy simulation (LES) is employed to investigate the diurnal modulation of turbulence in coastal dual-boundary layers under the combined effects of diurnal surface heat flux, wind, waves, and semi-diurnal tidal currents.}{Here we use idealized large-eddy simulations to investigate how diurnally varying surface heat flux, steady wind-wave forcing, and rotating semidiurnal tides modulate turbulence in coastal dual boundary layers.}
+\change[AI]{Our simulations reveal three distinct regimes of boundary layer interaction: fully separated, once overlap a day, and twice overlap a day, depending on the coupling between thermal stratification and wind-wave-current alignment.}{The simulations identify three recurring regimes: fully separated boundary layers, boundary layers overlapping once per day, and boundary layers overlapping twice per day.}
+\change[AI]{Extreme misalignment between the tidal current and the wind-waves can still prevent the surface and bottom boundary layers from overlapping after stratification disappears, even in the surface cooling period.}{Regime transitions are controlled jointly by water-column stratification and the phase-dependent alignment among wind waves and tidal currents. Even after stratification weakens strong current-wave misalignment can suppress overlap.}
+\change[AI]{Negative polarity tides in the northern hemisphere exhibit higher mixing efficiency and are more likely to induce boundary layer overlap under forcings of identical intensity.}{Under otherwise identical forcing negative-polarity tides in the Northern Hemisphere favor a thicker bottom boundary layer and more frequent overlap.}
+\change[AI]{Full-column turbulence occurs together with the overlap of boundary layers, causing an explosion in the turbulence level and fundamentally altering the stress state of coastal oceans.}{Full-column turbulence emerges during overlap events and is accompanied by substantial changes in turbulence intensity and stress anisotropy.}
+\end{abstract}
+
+\section*{Plain Language Summary}
+\change[AI]{In coastal oceans, the surface and bottom boundary layers have chances to interact due to the shallow water depth.}{In shallow coastal oceans the upper and lower turbulent boundary layers can directly interact because the water column is not very deep.}
+\change[AI]{The combination of solar radiation, wind, waves, and tides governs the diurnal evolution of water column mixing and dual-boundary layer patterns.}{Solar heating, wind, waves, and tides together control how mixing changes over the course of a day.}
+\change[AI]{Our simulations demonstrate that three distinct patterns of mixing exist in coastal oceans: (i) fully separated, (ii) merging once a day, and (iii) merging twice a day.}{Our simulations show three recurring patterns: the two boundary layers remain separated, merge once per day, or merge twice per day.}
+
+\change[AI]{Whether dual-boundary layers merge depends on two primary factors: the stratification and the alignment between tidal current and wind-waves.}{Whether the two boundary layers merge depends mainly on two factors: water-column stratification and the alignment between tidal currents and wind-waves.}
+\change[AI]{A key finding is that even in the absence of stratification, the layers will only merge if the tidal current is aligned with the wind and waves.}{A central result is that even when stratification becomes weak, overlap is favored only when the tidal current is suitably aligned with the wind and waves.}
+\change[AI]{Furthermore, the rotational direction of the tidal current significantly influences the mixing efficiency, making boundary layer merging easier under identical conditions.}{The rotational direction of the tidal current also matters, because it changes how efficiently turbulence grows near the seabed.}
+\change[AI]{When boundary layers merge, powerful turbulence is generated and occupies the whole water column. These powerful turbulence events are responsible for the enhancement of vertical mixing that can resuspend sediments and enhance material vertical exchange, thereby playing a critical role in shaping the coastal marine environment.}{When the two boundary layers merge, intense full-column turbulence develops and enhances vertical exchange throughout the water column. Such events can promote sediment resuspension and the transport of oxygen nutrients and pollutants, making them important for coastal marine environments.}
+
+\section{Introduction}
+\label{sec:Introduction}
+Turbulent mixing is crucial for momentum exchange, stratification evolution, and material transport in the ocean, significantly influencing biogeochemical processes.
+Oceanic turbulence is mainly confined within the ocean surface boundary layer (OSBL) and the bottom boundary layer (BBL).
+The OSBL turbulence is generated by various sources, including wind-stress-driven shear instability, surface-cooling-driven convection, and wave breaking \cite{Caldwell1995, DAsaro2014}.
+Langmuir turbulence (LT), a distinct type of turbulence generated by wave-current interaction through the Craik-Leibovich instability \cite{Craik1976, Leibovich1983}, has been studied extensively in recent years. It manifests as counter-rotating vortex pairs aligned approximately parallel to the wind direction, a phenomenon first reported by \citeA{Langmuir1938}. LT significantly enhances vertical transport within the surface mixed layer \cite{McWilliams2000, kukulka2012, Chen2016}. Research on the parameterization of Langmuir turbulence has shown that accounting for its effects can substantially reduce errors in large-scale ocean simulations, especially in the Southern Ocean \cite{Belcher2012, Li2016, Li2017}.
+In contrast, turbulence in the BBL is primarily driven by the frictional effect of near-bottom currents. Oscillatory flows, such as tidal currents and inertial oscillations, are key regulators of BBL evolution \cite{Simpson2009, Sakamoto2009, Gayen2009}. In the open ocean, the OSBL and BBL are typically separated by a thick water column, which precludes strong interaction between them. Consequently, most open-ocean turbulence studies examine a single boundary layer in isolation \cite<e.g.,>[]{McWilliams1997, Gayen2009, Ushijima2019}. In shallow coastal oceans, however, the OSBL and BBL are much closer together, making direct interaction possible.
+
+The overlap and interaction of these two boundary layers can substantially modify turbulence intensity and structure, sometimes extending energetic motions across the full water column. A prominent example is the Langmuir supercell, which is commonly interpreted as a product of Langmuir turbulence interacting with the bottom boundary and was first observed by \citeA{Gargett2004} in 15 m water off New Jersey. Langmuir supercells exhibit extremely high turbulence intensity and can drive coastal sediment resuspension and related transport processes \cite<e.g.,>[]{Gargett2004, Gargett2007, Martinez2007, Deng2018, Deng2020}. Similar transitions to full-column turbulence also occur in other settings, such as Couette circulations and convective supercells \cite{Papavassiliou1997, Juha2017}. Although such full-column turbulence can be highly energetic, its formation depends not only on water depth but also on a favorable combination of external forcing and ambient conditions.
+\citeA{Gargett2014} proposed three necessary conditions for Langmuir supercell generation and suggested that such events would be difficult to form at depths greater than 27 m. However, \citeA{Yan2022} demonstrated with large-eddy simulations that Langmuir-supercell-like structures can form at 45 m after pre-existing stratification is eroded, challenging this depth limit. Furthermore, \citeA{Valcarcel2025} reported overlap between surface and bottom turbulent boundary layers at depths up to 200 m, greatly expanding the possible range of such interactions, although the occurrence of full-column turbulence under these conditions remains unclear. A common theme emerging from these studies is the critical role of water-column stratification in modulating overlap between the two boundary layers. The evolution of stratification depends strongly on surface heat flux, and the diurnal cycle of surface heating and cooling modulates surface boundary-layer depth, turbulence, and vertical transport \cite<e.g.,>[]{Doney1995, Wan2015, Ushijima2019, Schmitt2024}.
+
+Besides stratification, the directional alignment among wind, waves, and currents is another key control on LT and related full-column structures. Previous open-ocean studies have shown that wind-wave misalignment, often associated with swell propagating in a direction different from the local wind, weakens Langmuir turbulence \cite{VanRoekel2012, McWilliams2014, Chen2016, Wang2022}. Such misalignment is even more common in coastal oceans because of limited fetch and topographic constraints, and its weakening effect on coastal LT has been documented by \citeA{Wang2022}. A second major source of misalignment in coastal regions is tidal rotation, which continuously changes the angle between the current and the wind stress. \citeA{Kukulka2011} showed that crosswind tidal currents can disrupt Langmuir supercells and proposed two mechanisms for this disruption. Likewise, \citeA{Shrestha2019} demonstrated that Langmuir-supercell intensity is strongest under full wind-wave-current alignment and diminishes under any misaligned condition.
+
+\change[AI]{Despite the recognized importance of these individual forcings, the manner in which they interact to modulate the diurnal evolution of the dual-boundary layers in the coastal ocean remains poorly understood. Previous studies have widely examined these forcings in isolation, neglecting the potential nonlinear interactions arising from their coupling. This coupling effect is likely particularly pronounced in coastal oceans due to the shallow depth. Among these forcings, surface heat flux and tidal current have relatively fixed and commensurate periods. When acting together, they may force the dual-boundary layer system into a regular diurnal cycle of turbulence evolution.}{Despite the recognized importance of these forcings, it remains unclear how diurnally varying stratification and rotating tidal-current alignment jointly determine the timing, duration, and recurrence of overlap events within a repeating daily cycle. Previous studies have generally examined stratification, directional misalignment, or overlap events in isolation, leaving the nonlinear interaction among these controls insufficiently understood. This issue is especially important in shallow coastal oceans, where the short distance between the OSBL and BBL makes the coupled response to heat flux and tides particularly strong.}
+
+\change[AI]{This study aims to elucidate the diurnal cycle of turbulence structure within coupled ocean boundary layers under the combined effects of wind, waves, heat flux, and tides, using a series of systematic large-eddy simulations. Our specific goal is to explain how the occurrence, duration, and intensity of boundary-layer overlap and full-column turbulence respond to variations in the phase of diurnal forcing.}{In this study, we use a series of idealized large-eddy simulations to examine how wind, waves, heat flux, and tides jointly modulate turbulence in coastal dual boundary layers. Our specific goal is to determine when overlap is suppressed by residual stratification and when it is instead limited by phase-dependent reductions in local shear production associated with tidal-current misalignment.}
+
+The remainder of this paper is structured as follows. Section~\ref{sec:method} describes the LES model and simulation setup. Section~\ref{sec:TKE} presents the diurnal evolution of turbulent kinetic energy (TKE) and boundary-layer structure. Section~\ref{sec:Budget} examines the TKE budget, followed by a wavelet-based spectral analysis in Section~\ref{sec:Wavelet}. Section~\ref{sec:Anisotropy} discusses the anisotropy of turbulence in coastal oceans. Finally, Section~\ref{sec:Summary} provides the discussion and conclusions.
+
+\section{Method}
+\label{sec:method}
+
+\subsection{Large eddy simulation}
+To investigate the evolution of the dual-boundary-layer system in coastal oceans, we employ large-eddy simulation (LES). LES has been widely used to study boundary-layer turbulence in both coastal and open-ocean environments \cite<e.g.,>[]{McWilliams1997, Li2005, Martinez2007, Chamecki2019, Yan2022}. \change[AI]{Our simulations using Oceananigans \cite{Ramadhan2020}, a modern computational fluid dynamics model distinguished by its user-friendly interface and optimized performance for GPU-accelerated computing.}{We perform the simulations using Oceananigans \cite{Ramadhan2020}, a modern computational fluid dynamics framework with a user-friendly interface and efficient GPU acceleration.} This modeling framework has been successfully applied to studies of turbulence dynamics and mixing in diverse oceanic boundary-layer settings \cite<e.g.,>[]{Bhamidipati2020, Coakley2021, Wagner2021, Chor2022}.
+
+The numerical model solves the wave-averaged Navier-Stokes equations under the Boussinesq approximation following the Craik-Leibovich (CL) formulation \cite{Craik1976,Leibovich1983}. While several mathematically equivalent forms of the CL equations exist \cite{Holm1996, Suzuki2016}, Oceananigans implements the prognostic system in terms of the Lagrangian velocity:
+
+\begin{linenomath*}
+\begin{subequations}
+\begin{align}
+\frac{\partial\mathbf{u}}{\partial t} + (\mathbf{u}\cdot\nabla)\mathbf{u}
+&=-\nabla p -(f\mathbf{z}-\nabla\times\mathbf{u}_s)\times\mathbf{u}+b\mathbf{z}-\nabla\cdot\boldsymbol{\tau^d}+\frac{\partial \mathbf{u}_s}{\partial t}, \\
+\frac{\partial \theta}{\partial t}+(\mathbf{u}\cdot\nabla)\theta&= -\nabla\cdot \theta ,\\
+\nabla\cdot\mathbf{u}&=0,
+\end{align}
+\label{eq:Governing}
+\end{subequations}
+\end{linenomath*}
+\note[AI]{Please verify the scalar-flux term in Equation~\ref{eq:Governing}b. The current form $-\nabla\cdot\theta$ appears dimensionally inconsistent and may be a typographical omission of an SGS flux term.}
+where $\mathbf{u}=\mathbf{u}_E+\mathbf{u}_s$ is the resolved Lagrangian-mean velocity, with $\mathbf{u}_E$ and $\mathbf{u}_s$ denoting the Eulerian velocity and the wave-induced Stokes drift velocity, respectively. Here, $p$ is the Eulerian-mean kinematic pressure, $f$ is the Coriolis frequency, $b$ is buoyancy, $\boldsymbol{\tau^d}$ is the subgrid-scale (SGS) stress tensor, and $\theta$ is conservative temperature.
+
+Buoyancy is expressed using a linear equation of state:
+\begin{linenomath*}
+\begin{equation}
+b=g(\alpha T-\beta S)\, ,
+\label{eq:Status}
+\end{equation}
+\end{linenomath*}
+\change[AI]{here, $g=-9.81\mathrm{m/s}$ is the gravitational acceleration, salinity $S=35\mathrm{psu}$ is a constant in our simulations. $\alpha=1.67\times10^{-4}$ and $\beta=7.80\times10^{-4}$ are the typical thermal expansion rate and haline contraction rate\cite{Vallis2017}, respectively.}{Here, $g=9.81\ \mathrm{m\ s^{-2}}$ is the magnitude of gravitational acceleration, and salinity is fixed at $S=35$ in all simulations. The coefficients $\alpha=1.67\times10^{-4}$ and $\beta=7.80\times10^{-4}$ represent typical thermal expansion and haline contraction coefficients, respectively \cite{Vallis2017}.}
+
+The SGS stress tensor is parameterized in eddy-viscosity form as
+\begin{linenomath*}
+\begin{equation}
+\tau^d_{ij}=-2\nu_{e}S_{ij} ,
+\label{eq:Closure}
+\end{equation}
+\end{linenomath*}
+where $S_{ij}=\frac{1}{2}(\frac{\partial u_{i}}{\partial x_{j}}+\frac{\partial u_{j}}{\partial x_{i}})$ is the resolved strain-rate tensor and $\nu_{e}$ is the eddy viscosity. The eddy viscosity is modeled using the anisotropic minimum dissipation (AMD) closure \cite{Rozema2015, Abkar2016, Verstappen2018}.
+
+\subsection{Forcing description}
+\change[AI]{As we mentioned in section~\ref{sec:Introduction}, this study focuses on the coupled effects of multiple forcings on the diurnal cycle of coastal boundary layers.}{As discussed in Section~\ref{sec:Introduction}, this study focuses on how multiple forcings jointly modulate the diurnal cycle of coastal boundary layers.} The imposed forcings are (i) a constant surface wind stress, (ii) a Stokes-drift profile associated with a steady surface-wave field, (iii) a diurnally varying surface heat flux, and (iv) a tidal current driven by a uniform body force.
+
+Since wind and waves do not exhibit a prescribed diurnal periodicity in this idealized framework, they are taken to be steady and horizontally homogeneous, with both directions aligned with the positive $x$ axis.
+
+A steady monochromatic wave \cite{Phillips1966, Leblond1981} is considered. The Stokes-drift velocity is
+\begin{linenomath*}
+\begin{equation}
+|\mathrm{u}_s(z)|=U_s\frac{\cosh[2k_w(z+H)]}{2\sinh^{2}(k_wH)}\ , z\in[-H, 0]\, ,
+\label{eq:Stokes}
+\end{equation}
+\end{linenomath*}
+where $U_s=\sigma k_wa^{2}$ is the surface Stokes-drift velocity, $a$ is the wave amplitude, $\sigma=\sqrt{gk_w\tanh(k_wH)}$ is the wave frequency, $g$ is gravitational acceleration, $k_{w}$ is the wavenumber, and $H$ is water depth.
+
+The diurnal surface heat flux $H_{f}(t)$ is idealized as a piecewise function that alternates between sinusoidal daytime heating and constant nighttime cooling:
+\begin{linenomath*}
+\begin{eqnarray}
+		H_{f}(t) = \left\{
+		\begin{aligned}
+			&H_{h}\sin(\frac{2\pi t}{T_{h}})+H_{c}  &\lfloor  \frac{t}{T_{h}}\rfloor T_{h} < t < (\lfloor \frac{t}{T_{h}}\rfloor+\frac{1}{2})T_{h} \nonumber \\
+			&H_{c}  &otherwise \nonumber \\
+		\end{aligned}
+		\right.
+  \label{eq:heat_forcing}
+\end{eqnarray}
+\end{linenomath*}
+Here, $H_{h}$ and $H_{c}$ denote the amplitudes of surface heating and cooling, respectively, and $T_{h}=24\ \mathrm{h}$ is the period of the diurnal cycle. The operator ``$\lfloor\cdot\rfloor$'' denotes the floor function. Similar formulations have been used previously to idealize the diurnal variation of surface heat flux \cite{Ushijima2019,Schmitt2024}.
+
+\change[AI]{The other diurnal forcing is the driving force of the tidal current. We consider a barotropic tidal flow, the driving force is therefore being set as a uniform body force applied to all control bodies.}{The second diurnal forcing is the tidal-current forcing. We consider a barotropic tide, so the forcing is prescribed as a spatially uniform body force applied throughout the domain.} The expression is derived from the simplified momentum equations of \citeA{Kundu1981}. Following \citeA{Wakata2013} and \citeA{Wakata2017}, we write
+\begin{linenomath*}
+\begin{equation}
+F=i(f+\sigma)\frac{U_{maj}+U_{min}}{2}e^{i(\sigma t+\phi+\Gamma)}+i(f-\sigma)\frac{U_{maj}-U_{min}}{2}e^{i(-\sigma t-\phi+\Gamma)} ,
+\label{eq:tide_forcing}
+\end{equation}
+\end{linenomath*}
+where $U_{maj}$ and $U_{min}$ are the major- and minor-axis velocities of the tidal ellipse, $\sigma=\pm2\pi/T_{tide}$ is the tidal angular frequency, $\phi$ is the initial phase, and $\Gamma$ is the angle between the major axis of the tidal ellipse and the $x$ axis. Positive $\sigma$ denotes counterclockwise rotation and negative $\sigma$ clockwise rotation. Following \citeA{Simpson1994}, the tidal ellipse can be characterized by the polarity
+\begin{linenomath*}
+\begin{equation}
+P=\pm{\frac{U_{min}}{U_{maj}}} ,
+\label{eq:polarity}
+\end{equation}
+\end{linenomath*}
+where the plus and minus signs denote anticlockwise (positive-polarity, PP) and clockwise (negative-polarity, NP) rotating currents, respectively.
+
+\change[AI]{Periodic boundary conditions are imposed in the horizontal direction based on the assumption of horizontally homogeneous.}{Periodic boundary conditions are imposed in the horizontal directions under the assumption of horizontal homogeneity.} The bottom boundary is treated as an impermeable wall, and the bottom stress is evaluated with a logarithmic wall model rather than being resolved directly:
+\begin{linenomath*}
+\begin{equation}
+\boldsymbol{\tau^b}=-\rho\left[\frac{\kappa U^b}{\ln(z^b/z_0)}\right]^{2}\left(\frac{u^b}{U^b},\ \frac{v^b}{U^b},\ 0\right)\ ,
+\label{eq:Wall}
+\end{equation}
+\end{linenomath*}
+where $\boldsymbol{\tau^b}$ is the bottom stress, $\rho$ is the water density, $\kappa=0.4$ is the von K\'arm\'an constant, $z_0=0.01\ \mathrm{m}$ is the bottom roughness length, $z^b=\Delta z/2$ is half the thickness of the first bottom grid cell, $u^b$ and $v^b$ are the near-bottom velocity components at $z^b$, and $U^b=\sqrt{(u^b)^2+(v^b)^2}$ is the current speed. Previous studies have shown that the logarithmic layer can be disrupted at low friction Reynolds number when Langmuir turbulence develops into Langmuir supercells \cite{Martinez2012}, but \citeA{Deng2018} found that the logarithmic layer reappears when $Re_{\tau}\sim O(10^{3})$. In our simulations $Re_{\tau}\sim O(10^{5})$, so the logarithmic wall model remains appropriate.
+
+\subsection{Simulation setup}
+We configure the simulations to represent a mid-latitude shallow coastal ocean, with Coriolis parameter $f=1\times10^{-4}\ \mathrm{s^{-1}}$ and water depth $H=45\ \mathrm{m}$. Including Earth's rotation is essential for our purpose because the full diurnal evolution of the surface and bottom boundary layers is influenced by inertial adjustment and rotational balance, even if rotation is secondary to the existence of Langmuir supercells themselves in some idealized nonrotating simulations \cite{Martinez2007, Grosch2016}. The choice $H=45\ \mathrm{m}$ is shallow enough to permit surface-bottom interaction \cite{Yan2022} yet deep enough to test the limiting arguments proposed by \citeA{Gargett2014}. The mid-latitude configuration also facilitates comparison with previous studies \cite{Salon2009, Li2013, Shrestha2018, Yan2022, Valcarcel2025}.
+
+The steady wind stress corresponds to a surface friction velocity $u_* = 0.01\ \mathrm{m\ s^{-1}}$, approximately equivalent to a wind speed of $8\ \mathrm{m\ s^{-1}}$ at 10 m height.
+
+The wave field has amplitude $a=0.88\ \mathrm{m}$ and wavelength $\lambda_w=50\ \mathrm{m}$. This yields a surface Stokes-drift velocity $U_s=0.108\ \mathrm{m\ s^{-1}}$ and a turbulent Langmuir number $La_{t}=0.3$, which is representative of coastal conditions \cite{Belcher2012}. The e-folding depth of the Stokes-drift profile is about $3.6\ \mathrm{m}$, less than 10\% of the water-column depth. In this study we focus on wave-averaged effects and do not include interactions between wave orbital motion and the bottom boundary.
+
+A total of six diurnal surface-heat-flux scenarios are used to span a wide range of plausible coastal conditions. The peak downward heat flux ranges from $300\ \mathrm{W\ m^{-2}}$ to $800\ \mathrm{W\ m^{-2}}$, and the constant upward heat flux ranges from $-50\ \mathrm{W\ m^{-2}}$ to $-300\ \mathrm{W\ m^{-2}}$. All cases have a 12-hour heating phase followed by a 12-hour cooling phase. The resulting thermal forcing is shown in Figure~\ref{fig:forcing}a.
+
+An idealized semidiurnal tide with period $T_{tide}=12\ \mathrm{h}$ is imposed, corresponding to angular frequency $\sigma=\pm1.45\times10^{-4}\ \mathrm{s^{-1}}$. Although this period does not represent a single tidal constituent exactly, it avoids introducing additional phase complexity relative to the imposed heat-flux cycle. A key simplification is that the tidal current is circular ($U_{maj}=U_{min}=0.25\ \mathrm{m\ s^{-1}}$), which keeps the magnitude of the bottom stress constant and allows us to isolate directional effects from speed variations.
+
+The major axis of the tidal ellipse is parallel to the $x$ axis, and the initial phase is aligned with the positive $x$ direction, so $\phi=0\degree$ and $\Gamma=0\degree$. This yields two experiment groups: PP with polarity $P=1$ and NP with polarity $P=-1$. Because tidal polarity affects the development time scale of the bottom boundary layer \cite{Simpson2009}, coupling tides of opposite polarity with the same surface forcing can produce substantially different outcomes. The imposed forcings and resulting tidal currents are shown in Figure~\ref{fig:forcing}b.
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1\textwidth]{figure/Forcing.png} \\
+\caption{\change[AI]{Diurnal forcings imposed in recent simulations. The left panel shows the diurnal cycle of surface heat flux, and the gray dashed lines indicate zero heat flux. The right panel shows the resultant currents(blue lines) of the baroclinic tidal force(red arrows for positive polarity tide and green arrows for negative polarity tide). The black $x$ cross indicates the corresponding phase of tidal force.}{Diurnal forcings imposed in the simulations. The left panel shows the prescribed surface heat flux, with gray dashed lines indicating zero flux. The right panel shows the resulting tidal currents (blue curves) associated with the imposed barotropic tidal forcing, with red arrows for positive-polarity tides and green arrows for negative-polarity tides. The black $x$ symbols indicate the corresponding forcing phases.}}
+\label{fig:forcing}
+\end{figure}
+
+\change[AI]{Simulations start from a neutral stratification state and spin up until a statistically stationary oscillatory equilibrium state is achieved, which is the statistical characteristics of turbulence that have no significant changes among different cycles. The last six days' data is collected for analysis.}{All simulations start from an initially neutrally stratified water column and are integrated until a statistically stationary oscillatory state is reached, meaning that phase-averaged turbulence statistics show no systematic drift from one diurnal cycle to the next. We analyze the final six days of each simulation.}
+\note[AI]{If available, add the total spin-up duration and a quantitative criterion for statistical stationarity.}
+
+A summary of all simulation cases is provided in Table~\ref{table:setup}.
+\begin{table}
+\caption{Parameters used in the simulations}
+\centering
+\begin{tabular}{c c c }
+\hline
+ Case  & $\sigma(\ \mathrm{s^{-1}})$ & $(H_{h}, H_{c})(\ \mathrm{W/m^{2}})$ \\
+\hline
+    Case 1(PP or NP) &  $\pm1.45\times10^{-4}$ & $(800, -50)$ \\
+    Case 2(PP or NP) &  $\pm1.45\times10^{-4}$ & $(775, -100)$ \\
+    Case 3(PP or NP) & $\pm1.45\times10^{-4}$ & $(750, -150)$ \\
+    Case 4(PP or NP) & $\pm1.45\times10^{-4}$ & $(625, -175)$ \\
+    Case 5(PP or NP) & $\pm1.45\times10^{-4}$ & $(500, -200)$ \\
+    Case 6(PP or NP) & $\pm1.45\times10^{-4}$ & $(300, -300)$ \\
+    Case C(PP or NP) & $\pm1.45\times10^{-4}$ & $(0, 0)$ \\
+\hline
+\multicolumn{3}{p{0.6\textwidth}}{$^{1}$Case 1 to Case 6 are the main simulations, and Case C is the control experiment. PP corresponds to positive angular frequency, whereas NP corresponds to negative angular frequency.} \\
+\end{tabular}
+\label{table:setup}
+\end{table}
+
+\section{Boundary Layer and Turbulence Diurnal Evolution}
+\label{sec:TKE}
+We begin by examining the diurnal evolution of boundary-layer structure and turbulence. TKE serves as a direct measure of turbulence intensity and, in practice, a useful indicator of when the surface and bottom turbulent layers become connected.
+\note[AI]{A quantitative operational definition of overlap should be inserted here, for example based on connected regions of elevated TKE or on the sum of diagnosed surface- and bottom-boundary-layer depths.}
+For any velocity component $u_i$, the flow can be decomposed into a mean and a fluctuation using Reynolds decomposition. Because the forcing varies in time, a strictly steady state is unattainable. We therefore assume that flow properties at the same phase of different diurnal cycles are statistically comparable. Accordingly, $\langle u_i\rangle$ denotes the ensemble mean obtained from horizontal and phase averaging, and $u_{i}^\prime$ denotes the fluctuation.
+The TKE is then defined as
+\begin{linenomath*}
+\begin{equation}
+k=\frac{1}{2}\langle u_i^\prime u_i^\prime\rangle\ ,
+\label{eq:TKE}
+\end{equation}
+\end{linenomath*}
+
+Figure~\ref{fig:TKE} presents the horizontal- and phase-averaged TKE for all cases. \change[AI]{Based on the number of surface and bottom boundary layer overlap events within a diurnal cycle, the pattern can be classified into three types: 1. the fully separated pattern, including Case 1$\sim$2(PP), and Case 1(NP)(Figure~\ref{fig:TKE}a, b, g); 2. Boundary layers overlap once a day, represented by Case 3$\sim$4(PP)(Figure~\ref{fig:TKE}c, d); 3. Boundary layers overlap twice a day, represented by Case 5$\sim$6(PP) and Case 2$\sim$6(NP)(Figure~\ref{fig:TKE}e, f, h$\sim$l).}{For clarity, we classify the simulated diurnal evolution into three regimes according to the number of overlap events per day: a fully separated regime, including Case 1--2(PP) and Case 1(NP) (Figure~\ref{fig:TKE}a, b, g); a once-daily overlap regime, represented by Case 3--4(PP) (Figure~\ref{fig:TKE}c, d); and a twice-daily overlap regime, represented by Case 5--6(PP) and Case 2--6(NP) (Figure~\ref{fig:TKE}e, f, h--l).}
+
+For the fully separated cases, active turbulence is confined to the surface and bottom boundary layers, with no overlap event during the diurnal cycle. Instead, a persistent barrier appears around $z/H=-0.4$ to $-0.7$, produced by the strong net heating in these cases. This stratification, which develops from the initially neutral state, strongly suppresses turbulent penetration. Even during the cooling phase ($t/T_h = 0.5$--$1$), boundary-generated turbulence is not strong enough to erode the accumulated potential energy completely. The TKE near the bottom in Case 1(NP) is weaker than in Case 1(PP), but it extends farther upward. This difference reflects the different growth time scales of the BBL under opposite tidal polarities. The characteristic time scale is $t_{BL+}\sim1/(\omega+f)$ for positive-polarity tides and $t_{BL-}\sim1/(\omega-f)$ for negative-polarity tides \cite{Simpson2009}, giving a thickness ratio $\frac{\delta_+}{\delta_-}=(\frac{\omega-f}{\omega+f})^{\frac{1}{2}}$. Thus, even with equal bottom-energy input, negative-polarity tides favor a more vertically extended BBL, whereas positive-polarity tides confine turbulence closer to the bed.
+
+\change[AI]{As the net heat flux gradually shifts from heating to cooling, the pattern of dual boundary layers evolution also transit from the fully separated type to the second type: Boundary layers overlap once a day.}{As the net daily heat flux shifts from net heating toward net cooling, the system transitions from the fully separated regime to the once-daily overlap regime.} In this intermediate state, surface heating no longer sustains a permanently stable mid-layer, but eroding the residual stratification still requires time. Potential energy accumulates during the first half of the day and is gradually weakened by turbulence until it is finally overcome near the start of the next diurnal cycle ($t/T_h=0$). At that time, a full-column TKE maximum appears, indicating that the surface and bottom turbulent layers have merged and begun to interact. This overlap is then rapidly suppressed by daytime heating, after which the layers separate again.
+
+As cooling intensifies further, the system enters the twice-daily overlap regime. Surface heating still separates the two turbulent layers temporarily, but the separation is brief. After the heating phase, the layers overlap again, producing a second full-column TKE enhancement within the same day.
+
+\change[AI]{Interestingly, the boundary layers do not remain in a persistently overlapping state even under the net cooling conditions. Instead, boundary layers merging remains transient.}{Even under net cooling, the boundary layers do not remain continuously merged; overlap remains transient and phase dependent.}
+
+\change[AI]{In summary, a comparison of cases with different thermal forcings reveals that increasing the total daily heat loss gradually shifts the dual boundary layers system from a "fully separate" state to a "twice-overlap" state. However, the system continues to shift between merged and separated states even under persistent cooling rules out thermal forcing as the only determinant of these events. Instead, the phase of tidal currents is also important for the periodic variation of boundary layers.}{Overall, increasing the daily heat loss shifts the system from a fully separated state toward a twice-daily overlap state. However, the persistence of alternating merged and separated phases even under continuous cooling shows that thermal forcing alone does not determine overlap; the tidal phase also plays a fundamental role.}
+
+Tidal polarity strongly regulates the dual-boundary-layer regime. In our simulations, cases with negative-polarity tides transition from the first regime directly to the third regime at weaker cooling than cases with positive-polarity tides. \change[AI]{This indicates that in the northern hemisphere, negative polarity tides enhance the turbulent mixing efficiency in coastal oceans, making it easier for the water column to mix uniformly under equivalent forcing intensities.}{Within the present Northern Hemisphere configuration, this result indicates that negative-polarity tides enhance turbulent mixing efficiency and favor more frequent overlap under otherwise identical forcing.}
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/TKEEvolutionAll.png} \\
+\caption{\change[AI]{Horizontal-phase averaged TKE evolution in one day. Results are normalized by $u_{*}^{2}$. The left column(a$\sim$f) shows cases with positive polarity tide, and the right column shows cases with negative polarity tide. From top to bottom indicates a gradual increase in cooling.}{Horizontal- and phase-averaged TKE over one day, normalized by $u_{*}^{2}$. The left column (a--f) shows positive-polarity tides, and the right column shows negative-polarity tides. From top to bottom, the net cooling increases.}}
+\label{fig:TKE}
+\end{figure}
+
+To further diagnose the factors that inhibit interaction between the surface and bottom turbulent layers, we use the gradient Richardson number to evaluate dynamic stability:
+\begin{linenomath*}
+\begin{equation}
+Ri_g=\frac{\alpha g\frac{\partial \theta}{\partial z}}{(\frac{\partial U}{\partial z})^{2}+(\frac{\partial V}{\partial z})^2}\ ,
+\label{eq:RichardsonNumber}
+\end{equation}
+\end{linenomath*}
+Figure~\ref{fig:Rig} shows the horizontal- and phase-averaged $Ri_g$ for all cases. In the fully separated cases (Case 1(PP, NP) and Case 2(PP)), $Ri_g$ in the mid-layer remains well above the canonical threshold of 0.25 throughout the diurnal cycle, indicating dynamically stable conditions and consistent with the weak mid-layer TKE in Figure~\ref{fig:TKE}a, b, g. This confirms that strong thermal stratification is the primary inhibitor of surface-bottom interaction in these cases.
+
+For the once-daily overlap regime, $Ri_g$ in the mid-layer exceeds 0.25 during most of the cycle ($\ge0.75T_h$), indicating that stratification is usually strong enough to suppress sustained turbulence. Only after this stratification has been eroded can the mid-layer become dynamically unstable and permit interaction between surface and bottom turbulence. Case 4(PP), however, reveals a more subtle behavior: $Ri_g$ drops below 0.25 after $t/T_h \approx 3/4$ (Figure~\ref{fig:Rig}d), suggesting dynamic instability, yet strong mid-layer TKE appears only later (Figure~\ref{fig:TKE}d). \change[AI]{The difference between TKE and Richardson number suggests that $Ri_g<0.25$ is a necessary but not always sufficient condition for turbulence generation. The local production of TKE depends on the magnitude of the shear is also important.}{This mismatch indicates that $Ri_g<0.25$ is necessary but not sufficient for vigorous turbulence generation; the local shear production of TKE must also be strong enough.}
+
+This mechanism becomes even clearer in the twice-daily overlap regime. There, stable conditions ($Ri_g>0.25$) are largely restricted to the first half of the day, when surface heating maintains weak stratification. After the transition to cooling, this stratification is rapidly eroded. In Case 5(PP, NP), for example, the vertical temperature gradient is only $\frac{\partial T}{\partial z}\approx0.005\ \mathrm{K\ m^{-1}}$, yet $Ri_g$ can still exceed 0.25 during the first half of the day and even exceed 1 near $t/T_h=1/4$. This occurs because high $Ri_g$ is associated with phases when the tidal current opposes the wind stress (e.g., $t/T_h \approx 1/4, 3/4$). At those times, the wind stress and bottom stress act in the same direction and generate a parabolic-like mean-flow profile with a velocity extremum in the mid-layer, producing a shear minimum there. Even weak stratification can then yield large $Ri_g$ because the denominator of Equation~\ref{eq:RichardsonNumber} becomes small. Crucially, this same shear minimum also reduces local TKE production. The weak mid-layer turbulence around $t/T_h \approx 1/4$ and $3/4$ can therefore be attributed to the absence of a local energy source. This phase-dependent modulation of shear production is a fundamental control on overlap events in coastal dual boundary layers.
+
+\change[AI]{As for the Case 6(PP and NP), the sea surface remains in cooling throughout the diurnal cycle, thus the vertical temperature gradient is always satisfying $\frac{\partial \theta}{\partial t}\leq 0$. Therefore, the numerator in $Ri_g$ is always zero or negative, and high $Ri_g$ values cannot form regardless of the shear magnitude. In this situation, the weak turbulence phase still emerges, further confirming the regulatory mechanism of tidal currents direction on boundary layers.}{In Case 6(PP and NP), the surface cools throughout the day, so stabilizing stratification does not develop. As a result, high $Ri_g$ values cannot persist regardless of the shear magnitude. Even so, weak-turbulence phases still emerge, further demonstrating that tidal-current direction alone can regulate coupling and decoupling between the two boundary layers.}
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/GradientRiAll.png} \\
+\caption{Horizontal- and phase-averaged gradient Richardson number during one diurnal cycle. The black dashed line indicates the contour $Ri_g=0.25$. The left column shows positive-polarity tides, and the right column shows negative-polarity tides. From top to bottom, the net cooling increases.}
+\label{fig:Rig}
+\end{figure}
+
+\section{Energy Budget Analysis}
+\label{sec:Budget}
+To further investigate the dynamics of the dual-boundary-layer system, we diagnose TKE evolution using the TKE budget equation:
+\begin{linenomath*}
+\begin{equation}
+\frac{\partial \langle k\rangle}{\partial t}=\underbrace{-[\langle u_i^\prime w^\prime\rangle+\langle\tau_{i3}^d\rangle]\frac{\partial \langle u_i\rangle}{\partial z}}_{P_k} +\underbrace{\alpha g\langle w^\prime \theta^\prime\rangle}_{B_k}-\underbrace{[\frac{1}{2}\frac{\partial\langle u^\prime_iu^\prime_iw\rangle}{\partial z}-\frac{\partial\langle u^\prime_i\tau^{d\prime}_{i3}\rangle}{\partial z}]}_{T_k}-\underbrace{\frac{1}{\rho_0}\frac{\partial w^\prime p^\prime}{\partial z}}_{\Pi_k}-\underbrace{\langle \tau_{ij}^d\frac{\partial u_i}{\partial x_j}\rangle}_{\epsilon} \,
+\label{eq:Budgets}
+\end{equation}
+\end{linenomath*}
+where $P_k$ denotes production by Lagrangian shear, $B_k$ is buoyancy production, $T_k$ is turbulent transport including both resolved transport and SGS diffusion, $\Pi_k$ is pressure transport, and $\epsilon$ is dissipation.
+
+Three positive-polarity cases were selected to illustrate the energetics of the three regime types. Figures~\ref{fig:Budget_Case1PP}--\ref{fig:Budget_Case6PP} show all TKE budget terms for Case 1(PP), Case 3(PP), and Case 6(PP).
+
+For Case 1(PP), TKE near the boundaries is primarily balanced by shear production and dissipation (Figure~\ref{fig:Budget_Case1PP}a,b). Strong daytime heating creates a stably stratified warm layer, generating strongly negative buoyancy production in the surface boundary layer during $t/T_h\in(0,1/2)$. After the heating phase, the buoyancy term becomes mixed in sign: dense surface water sinks and drives convective mixing above approximately $z/H=-0.2$, while below that level turbulence works against the stratification and therefore consumes TKE. Shear production is strongest close to the boundaries, where dissipation lags slightly behind; excess TKE is then redistributed away from the boundaries by turbulent transport. Because the stratified layer blocks direct penetration of turbulent motions, the turbulent transport term is nearly zero within the pycnocline. The pressure-transport term shows the opposite redistribution pattern and may indicate energy leakage into internal-wave motions. The net TKE tendency is small, implying a quasi-equilibrium state, especially in the BBL. \change[AI]{However, no reasonable explanation can be proposed for the oscillations of TKE observed in the bottom boundary layer. }{The recurrent oscillations of TKE within the BBL likely reflect phase-dependent bottom-boundary-layer adjustment to the rotating tide; a dedicated diagnosis of this signal is left for future work.}
+
+When the total heat flux shifts toward cooling, weak daytime heating can no longer sustain permanent stratification. In Case 3(PP), a full-column TKE enhancement emerges near $t/T_h=0$, indicating overlap between the two boundary layers. During this event, shear production increases in the mid-layer, but dissipation also rises strongly. \change[AI]{This local imbalance between production and dissipation is compensated by the positive contribution from the turbulent transport term, which redistributes energy from the boundaries to the mid-layer(figure~\ref{fig:Budget_Case3PP}d). While the buoyancy production $B_k$ contributes more to the growth of TKE than Case 1(PP), however, the turbulent transport term $T_k$ is the primary role in filling the gap between production and dissipation in terms of magnitude.}{This local imbalance is offset mainly by positive turbulent transport, which redistributes energy from the boundaries into the mid-layer (Figure~\ref{fig:Budget_Case3PP}d). Relative to Case 1(PP), buoyancy production contributes more to TKE growth, but $T_k$ provides the dominant positive contribution needed to bridge the gap between local production and dissipation.} Once stratification is disrupted, turbulence can penetrate the interior much more efficiently, producing a rapid increase of mid-layer TKE and signaling interaction between surface and bottom turbulence. As daytime heating resumes, stratification regenerates in the mid-layer, after which the budget structure again resembles that of Case 1(PP) until the next erosion event.
+
+In Case 6(PP), persistent surface cooling prevents the formation of stabilizing stratification. Even so, the disappearance of stratification does not lead to permanent overlap. The shear-production term peaks twice per day, near $t/T_h=0$ and $t/T_h=1/2$, when the tidal current aligns with the wind and waves. Buoyancy production and turbulent transport also contribute positively to mid-layer TKE growth during these phases, leading to full-column TKE maxima. After each peak, the tidal current rotates away from alignment, local shear production weakens, and dissipation remains elevated because turbulence is still active. Dissipation then exceeds the sum of the positive source terms, causing TKE to decrease. When the current and wind-waves become opposed, shear production reaches a minimum and so does TKE (Figure~\ref{fig:TKE}f).
+
+Overall, strong stratification acts as the dominant barrier when present. As stratification weakens, its inhibitory effect becomes transient, and the timing of overlap is increasingly controlled by tidal phase. In the absence of stabilizing stratification, the tidal current alone regulates coupling and decoupling between the two boundary layers by modulating the local turbulence source.
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/Case1PP_Budget.png} \\
+\caption{Horizontal- and phase-averaged TKE budget terms over one day for Case 1(PP). Results are normalized by $u_{*}^{3}/H$. From top to bottom the panels show the shear-production term $P_k$ (a), dissipation $\epsilon$ (b), buoyancy production $B_k$ (c), turbulent transport $T_k$ (d), pressure transport $\Pi_k$ (e), and the TKE tendency (f).}
+\label{fig:Budget_Case1PP}
+\end{figure}
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/Case3PP_Budget.png} \\
+\caption{Same as Figure~\ref{fig:Budget_Case1PP}, but for Case 3(PP).}
+\label{fig:Budget_Case3PP}
+\end{figure}
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/Case6PP_Budget.png} \\
+\caption{Same as Figure~\ref{fig:Budget_Case1PP}, but for Case 6(PP).}
+\label{fig:Budget_Case6PP}
+\end{figure}
+
+\section{\change[AI]{Spectra analysis of turbulence}{Spectral Analysis of Turbulence}}
+\label{sec:Wavelet}
+While the TKE budget reveals the energetics of turbulence, it does not fully describe how turbulence structure evolves under diurnal forcing. To characterize the time-frequency evolution of TKE in the coastal dual-boundary-layer system, we use a wavelet transform, which is well suited for nonstationary processes. We again focus on three representative cases, Case 1(PP), Case 3(PP), and Case 6(PP), to illustrate the three regime types. Figures~\ref{fig:Spectrum_Case1PP}--\ref{fig:Spectrum_Case6PP} show the premultiplied wavelet energy spectra.
+
+For the fully separated case, the surface TKE spectrum exhibits a quarter-diurnal modulation. Energy shifts toward lower frequencies near $t/T_h = 0, 1/4, 1/2,$ and $3/4$, and toward higher frequencies in between. The surface TKE minimum occurs near $t/T_h = 1/4$, when surface heating is strongest. A plausible interpretation is that wave-current misalignment weakens Langmuir turbulence through the same basic mechanism identified for wind-wave misalignment \cite{Wang2019, Wang2022}: misalignment between Lagrangian and Eulerian shear reduces the energy source for Langmuir turbulence. Because Langmuir turbulence is associated with streaky, counter-rotating structures that are larger in scale than shear-driven turbulence, its weakening corresponds to reduced energy at low frequency. The BBL turbulence displays a distinct $T_h/8$ periodicity, with little apparent influence from surface turbulence. \change[AI]{These characteristics have also been observed in the results of TKE(Figure~\ref{fig:TKE}), but there is no satisfactory explanation for it yet.}{This periodicity is also visible in the TKE fields (Figure~\ref{fig:TKE}) and likely reflects an internally generated modulation of bottom-boundary-layer adjustment under rotating tidal forcing, although a dedicated analysis is beyond the scope of this study.} Within the stratified layer, the spectra suggest the presence of internal-wave activity. In our simulations, surface turbulence appears to exert stronger control on internal-wave variability than the BBL does, likely because Langmuir-driven downwelling jets perturb the upper pycnocline more directly. Although internal waves may facilitate interaction between the two boundary layers, our analysis suggests that this pathway is secondary to direct turbulent transport during overlap events.
+
+The spectral signature of boundary-layer overlap is markedly different. In Case 3(PP), the overlap event near $t/T_h=0$ is associated with a narrow low-frequency energy peak coherent across the full water column. \change[AI]{This peak is coherent across the entire water column, indicating the emergence of a well-organized, large-scale turbulence structure, such as Langmuir supercells, which efficiently couple the surface and bottom boundary layer.}{This peak indicates the emergence of a well-organized large-scale structure consistent with Langmuir-supercell-like motions that efficiently couple the surface and bottom boundary layers.} Once stratification reforms, the full-column peak disappears and the spectral structure returns to that of the fully separated regime.
+
+This full-column peak is even more pronounced in the twice-daily overlap regime. The low-frequency full-column peaks are stronger and occur twice per day, at $t/T_h =0$ and $t/T_h = 1/2$, consistent with the TKE evolution. After $t/T_h=1/2$, total energy remains elevated relative to the first half of the day, but the coherent narrow-band full-column mode is absent. We attribute this asymmetry to stronger surface cooling during the second half of the day, which enhances convective turbulence and broadens the spectral energy distribution. Even so, a full-column convective supercell like that reported by \citeA{Juha2017} does not form.
+
+\change[AI]{These results indicate that full-column turbulence in coastal oceans does not always exist, it can only form when stratification is eliminated and the alignment relationship between wind, waves, and currents is appropriate.}{These results indicate that full-column turbulence in coastal oceans is conditional rather than persistent: it develops only when stabilizing stratification has been removed and when the alignment among wind, waves, and currents is sufficiently favorable.} When either requirement is not met, turbulence remains confined to the two boundary layers as smaller-scale, higher-frequency motions, preventing direct interaction across the water column.
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/WaveletTransform_Case1PP.png} \\
+\caption{Horizontal- and phase-averaged premultiplied wavelet energy spectrum for Case 1(PP), normalized by $u_{*}^{2}$. Results are shown at four depths. The white line marks the Brunt-V\"ais\"al\"a frequency corresponding to the maximum temperature gradient. The red line denotes the tidal frequency, and the yellow line denotes the Coriolis frequency.}
+\label{fig:Spectrum_Case1PP}
+\end{figure}
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/WaveletTransform_Case3PP.png} \\
+\caption{Same as Figure~\ref{fig:Spectrum_Case1PP}, but for Case 3(PP).}
+\label{fig:Spectrum_Case3PP}
+\end{figure}
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/WaveletTransform_Case6PP.png} \\
+\caption{Same as Figure~\ref{fig:Spectrum_Case1PP}, but for Case 6(PP).}
+\label{fig:Spectrum_Case6PP}
+\end{figure}
+
+\section{\change[AI]{Anisotropic barycentric map}{Barycentric Map of Turbulence Anisotropy}}
+\label{sec:Anisotropy}
+\note[AI]{This section is retained but the strongest claims about Langmuir supercells are moderated to match the current evidence chain. If direct flow-field visualizations are added, some statements below may be strengthened again.}
+The barycentric map of Reynolds-stress anisotropy is used to illustrate the diurnal evolution of turbulence state. The underlying analysis traces back to \citeA{Lumley1977}, who characterized turbulence anisotropy using invariants of the anisotropy tensor. The anisotropy tensor is
+\begin{linenomath*}
+\begin{equation}
+a_{ij}=\frac{\langle u_i^\prime u_j^\prime\rangle}{2e}-\frac{\delta_{ij}}{3}\ ,
+\label{eq:Elements}
+\end{equation}
+\end{linenomath*}
+and the corresponding principal invariants are
+\begin{linenomath*}
+\begin{subequations}
+\begin{align}
+I=a_{ii}=0 \ ,
+II= a_{ij}a_{ji} \ ,
+III=a_{ij}a_{jk}a_{ki} \ ,
+\end{align}
+\label{eq:Invariants}
+\end{subequations}
+\end{linenomath*}
+where $I$, $II$, and $III$ are the first, second, and third principal invariants of the anisotropy tensor. A graphical representation based on these invariants is the anisotropy invariant map (AIM), also known as the Lumley triangle \cite{Lumley1977}. Because the mapping from invariants to physical stress states is nonlinear, we instead use the barycentric map \cite{Banerjee2007}, which provides an equivalent but less visually distorted representation. The barycentric coordinates are defined from the eigenvalues of $a_{ij}$ as
+\begin{linenomath*}
+\begin{subequations}
+\begin{align}
+C_{1c}=\lambda_1-\lambda_2 \ ,
+C_{2c}= 2(\lambda_2-\lambda_3) \ ,
+C_{3c}=3\lambda_3+1 \ ,
+\end{align}
+\label{eq:Barycentric}
+\end{subequations}
+\end{linenomath*}
+and the Cartesian coordinates of each point are reconstructed as
+\begin{linenomath*}
+\begin{subequations}
+\begin{align}
+x_{new}&= C_{1c}x_{1c}+C_{2c}x_{2c}+C_{3c}x_{3c}\ , \\
+y_{new}&= C_{1c}y_{1c}+C_{2c}y_{2c}+C_{3c}y_{3c} \ ,
+\end{align}
+\label{eq:Location}
+\end{subequations}
+\end{linenomath*}
+where $\lambda_1>\lambda_2>\lambda_3$ are the eigenvalues of $a_{ij}$. The three vertices, labeled 1C, 2C, and 3C, represent the limiting states of one-component turbulence, two-component turbulence, and isotropic three-component turbulence, respectively.
+
+Because the barycentric map represents anisotropy through scalar measures only, directional information is omitted. We therefore follow \citeA{Li2020} and also diagnose the direction of anisotropy. Of the three idealized anisotropy classes, the one-component (1C) and two-component (2C) states are the most relevant for directional interpretation. The 1C stress ellipsoid is cigar-like, with its principal axis aligned with the maximum principal stress, whereas the 2C state is pancake-like, with its principal axis aligned with the minimum principal stress. These descriptors refer to the relative strength of the stress components rather than to the geometric shape of turbulent eddies. The classification is
+\begin{linenomath*}
+\begin{subequations}
+\begin{align}
+N1C, Major\ axis,&\ if\  C_{1c}>C_{2c}\ , \\
+N2C, Minor\ axis,&\ if\  C_{1c}<C_{2c} \ ,
+\end{align}
+\label{eq:Direction}
+\end{subequations}
+\end{linenomath*}
+where N1C and N2C denote the one-component and two-component stress states. Taking the wind direction as a reference, we define the azimuth angle $\theta$ as the horizontal angle between the principal axis and the wind direction and the elevation angle $\phi$ as the angle between the principal axis and the horizontal plane. Figure~\ref{fig:Anisotropic_Case1PP}a--d shows the evolution of stress state at four depths over one diurnal cycle for Case 1(PP), and Figure~\ref{fig:Anisotropic_Case1PP}e--h shows the corresponding anisotropy directions.
+
+Consistent with the suppression of vertical velocity at solid boundaries, the stress state very close to the surface and bottom is confined to the lower edge of the barycentric map, where one principal stress component vanishes. In Case 1(PP), the BBL exhibits a cigar-like state characteristic of shear-dominated boundary-layer turbulence \cite{Martinat2011, Klipp2012, Vercauteren2019}. This is consistent with an independently developing BBL beneath a stratified mid-layer. With increasing distance from the bottom, the stress state moves away from the 1C vertex as direct wall influence weakens. Surface-generated disturbances may still reach the BBL through internal waves, but their effect on the BBL stress state remains weak.
+
+In the surface boundary layer, the stress state is distinctly different and lies mainly between the 2C and 3C vertices. A clear cusp appears along the axisymmetric-contraction edge, and the principal axis of the pancake-like states is rotated slightly to the right of the wind direction (Figure~\ref{fig:Anisotropic_Case1PP}e--h). This pattern is a known signature of Langmuir turbulence \cite{Li2020}, indicating that although several turbulence types coexist in the surface layer, Langmuir turbulence dominates the near-surface dynamics. As Stokes drift decreases with depth, shear turbulence becomes increasingly important, and the stress state near the base of the surface boundary layer ($z/H\approx-0.4$) shifts from pancake-like to cigar-like, especially near $t/T_h=1/4$.
+
+Within the stratified mid-layer ($z/H \in (-0.7, -0.4)$), turbulent motions are weak and the stress state clusters near the isotropic vertex. A similar tendency toward isotropy appears during phases of strong current-wind misalignment ($t/T_h \approx 1/4$ and $3/4$) even in weakly stratified or unstratified cases. This supports the energy-budget result that local shear production is strongly reduced at those phases. Turbulence in the mid-layer is then advected from the boundaries and undergoes free decay away from its production regions, moving the stress state toward isotropy.
+
+\change[AI]{The most striking evolution in stress anisotropy occurs during boundary layer overlap events. As shown in Figure~\ref{fig:Anisotropic_Case3PP}a and Figure~\ref{fig:Anisotropic_Case6PP}a, c, the stress state in the bottom boundary layer shifts from the cigarlike state(1C) towards the pancakelike state(2C) during these events. This signifies a fundamental change in the turbulence structure near the bottom, the spanwise and streamwise stress components become comparable and further intensify than the vertical component. This change indicates the generation of Langmuir supercells, which dominate the entire water column. When boundary layers merge, full-column counter-rotating vortex pairs parallel to the mean flow direction form in the water column. The bottom boundary serves as the lower edge of these vortex pairs. Intense convergence and divergence near the bottom significantly enhance the originally weak spanwise normal stress, causing the stress state of the flow field to transition from the 1C state (dominated by the streamwise component) to the 2C state (dominated by the streamwise and spanwise components). Additionally, when Langmuir supercells exist, the vertical component of normal stress reaches its maximum at the mid-layer, while the spanwise stress is almost zero, and the streamwise stress also decreases to its minimum. As a result, the mid-layer stress state no longer leans toward the 3C vertex but shifts to the 1C vertex. These anisotropy changes are most pronounced in Case 6(PP)(figure~\ref{fig:Anisotropic_Case6PP}a,c), where the absence of stratification provides a continuous favorable environment for the development of full-column turbulence. This stress state is consistent with that depicted by the Lumley triangle in the observational study of \citeA{Gargett2007}, which further confirms the presence of Langmuir supercells.}{The most striking anisotropy changes occur during overlap events. As shown in Figure~\ref{fig:Anisotropic_Case3PP}a and Figure~\ref{fig:Anisotropic_Case6PP}a,c, the BBL stress state shifts from a cigar-like 1C state toward a pancake-like 2C state, indicating a fundamental reorganization of turbulence structure near the bottom. During these phases the spanwise and streamwise normal stresses become much more comparable, consistent with the emergence of coherent full-column motions. This behavior is consistent with turbulence structures of the Langmuir-supercell type, although direct flow-field visualizations would be needed for an unambiguous identification. The transition is strongest in Case 6(PP) (Figure~\ref{fig:Anisotropic_Case6PP}a,c), where the lack of stabilizing stratification provides the most favorable environment for sustained full-column organization.}
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/AnisotropicMap_Case1PP.png} \\
+\caption{\change[AI]{The upper column(a$\sim$d) shows the barycentric map for Case 1(PP) at different phases, and the lower column(e$\sim$g) shows the corresponding direction of anisotropy. Markers are colored by their normalized depth $z/H$. Circle markers indicate the cigarlike anisotropy, and xcross represents the pancakelike stress. The size of markers in the direction map is proportional to their anisotropy, and the legends in the upper-right represent the size of pure one-component(circle) and pure two-component(x-cross). The positive x-axis direction is aligned with the wind and wave direction. The difference between the two concentric circles in the direction map is 18° of elevation angle. }{The upper row (a--d) shows the barycentric map for Case 1(PP) at different phases, and the lower row (e--h) shows the corresponding anisotropy direction. Markers are colored by normalized depth $z/H$. Circle markers denote cigar-like anisotropy, and cross markers denote pancake-like anisotropy. Marker size in the direction map is proportional to anisotropy magnitude. The positive $x$ direction is aligned with the wind and wave direction, and the spacing between the concentric circles corresponds to $18^\circ$ in elevation angle.}}
+\label{fig:Anisotropic_Case1PP}
+\end{figure}
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/AnisotropicMap_Case3PP.png} \\
+\caption{Same as Figure~\ref{fig:Anisotropic_Case1PP}, but for Case 3(PP).}
+\label{fig:Anisotropic_Case3PP}
+\end{figure}
+
+\begin{figure}[!htb]
+\noindent\includegraphics[width=1.0\textwidth]{figure/AnisotropicMap_Case6PP.png} \\
+\caption{Same as Figure~\ref{fig:Anisotropic_Case1PP}, but for Case 6(PP).}
+\label{fig:Anisotropic_Case6PP}
+\end{figure}
+
+\section{Discussion and Conclusion}
+\label{sec:Summary}
+\change[AI]{Through a series of idealized large eddy simulations, this study demonstrates the diurnal evolution of turbulence in coastal dual-boundary layers under the coupled effects of heat, tides, wind, and waves. Three characteristic regimes of dual boundary layers are identified: (i) fully separated, (ii) overlap once a day, and (iii) overlap twice a day, each arising from specific combinations of the external forcings. While mid-layer stratification remains a primary inhibitor of vertical turbulent exchange, our results emphasize that even in its absence, the phase and polarity of tidal currents play decisive roles in regulating the timing and intensity of turbulence mixing. In particular, negative polarity tides enhance turbulent diffusion and lead to boundary layer overlaps more easily, highlighting the importance of rotational effects in coastal dual-boundary layer systems.}{Using a suite of idealized large-eddy simulations, we identified three recurring regimes of turbulence in coastal dual boundary layers: a fully separated regime, a once-daily overlap regime, and a twice-daily overlap regime. Across these regimes, mid-layer stratification remains the primary barrier to vertical turbulent exchange. As stratification weakens, however, the timing and intensity of overlap become increasingly controlled by tidal phase and polarity. Within the present Northern Hemisphere configuration, negative-polarity tides promote a more rapidly developing bottom boundary layer and therefore favor overlap under weaker cooling.}
+
+\change[AI]{The emergence of full-column turbulence structures, such as Langmuir supercells, is shown to depend critically on both the erosion of stratification and the alignment of wind, waves, and currents. Spectral analysis reveals that these events are associated with a dominant, low-frequency energy peak spanning the entire water column, while the anisotropy of Reynolds stress occurs with a systematic change over the water column: the stress state around the bottom shifts from the shear turbulence-dominated 1C state toward the 2C state, and the middle layer moves away from the 3C state due to the strong vertical motions of Langmuir supercells.}{Our results further show that full-column turbulence develops only when two requirements are met simultaneously: stabilizing stratification must be sufficiently eroded, and the alignment among wind, waves, and tidal currents must be favorable. Spectral analysis links overlap events to coherent low-frequency energy peaks spanning the water column, and anisotropy diagnostics show that the Reynolds-stress structure changes systematically during these events. Together, these signatures are consistent with Langmuir-supercell-like full-column motions, although direct flow visualization would provide a stronger basis for that identification.}
+
+\change[AI]{The periodic generation and decay of full-column turbulence illustrated here have profound implications for coastal processes reliant on vertical mixing, such as sediment resuspension, nutrient supply, coastal oxygen depletion, and pollutant dispersal. Our results demonstrate that the occurrence of intense, full-column mixing requires not only unstratified environments, but also specific, feasible phases of the tidal currents to ensure that the currents and wind-waves do not excessively misalign. This reveals that turbulence parameterizations in regional and global ocean models must account for the effect of temporal variability at the diurnal scale. }{The periodic generation and decay of these full-column events has important implications for coastal processes that depend on vertical exchange, including sediment resuspension, nutrient supply, oxygen redistribution, and pollutant transport. More generally, the results suggest that bulk measures of stratification alone may be insufficient for predicting overlap events. Parameterizations of coastal vertical mixing may also need to account for phase-dependent alignment among winds, waves, and currents at the diurnal time scale.}
+
+\change[AI]{Future work should incorporate more realistic conditions, such as broadband wave spectra, time-varying wind fields, and complex bathymetry, to better assess the robustness of these dual-boundary layer patterns in real oceans.}{Future work should test the robustness of these mechanisms under more realistic conditions, including broadband wave spectra, time-varying winds, noncircular tidal ellipses, and complex bathymetry.}
+
+\change[AI]{In conclusion, this research highlights the necessity of considering the combination effects of multiple forcings, especially diurnal forcings, in shaping coastal turbulence dynamics. By integrating the effects of heat, wind, wave, and rotational tides, our study provides a framework for predicting when boundary layer overlaps happen in coastal oceans and how strong they are. These findings provide a foundation for improving vertical mixing parameterizations in numerical models and offer new insights into the complex dynamics of dual-boundary layer systems in coastal oceans.}{In conclusion, the diurnal evolution of coastal dual boundary layers is governed by a transition from stratification control to alignment control. This framework helps explain when overlap occurs, why it can recur once or twice per day, and why strong full-column turbulence remains intermittent even under net cooling. These findings provide a physically grounded basis for improving vertical-mixing parameterizations in coastal ocean models.}
+
+\section*{Open Research Section}
+\add[AI]{Please replace this placeholder with an author-specific Open Research statement before submission. At minimum, specify the Oceananigans version, the availability of simulation scripts and post-processing code, and where archived model output or derived analysis files can be accessed. If the data are not yet public, indicate when and where they will be archived.}
+
+\section*{\change[AI]{As Applicable – Inclusion in Global Research Statement}{Inclusion in Global Research Statement}}
+\add[AI]{This study is based on idealized numerical simulations and did not involve field sampling, local permitting, or community-based data collection. Please revise this statement as needed so that it accurately reflects the authors' collaboration practices and any institutional or regional requirements.}
+
+\acknowledgments
+\add[AI]{Please add funding information, computational-resource acknowledgments, and any additional author-specific acknowledgments here.}
+
+\bibliography{LibraryForDBL}
+
+\end{document}
