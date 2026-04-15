@@ -1,5 +1,6 @@
 using LinearAlgebra
 using Printf
+using DelimitedFiles
 
 required_symbols = [:build_rect_grid, :build_L_blocks, :build_M_B_C_rect, :transfer_gain_rect]
 missing_symbols = [s for s in required_symbols if !isdefined(Main, s)]
@@ -181,5 +182,87 @@ function run_internal_validation(; H = 1.0, N = 128, kx = 1.3, kz = 2.1, ω = 0.
     return (; all_pass = all(pass), pass, sigma_list)
 end
 
+function run_analytic_u_pattern_demo(;
+    H = 1.0,
+    N = 128,
+    kz = 2pi,
+    ν0 = 0.05,
+    nmode = 1,
+    nz = 128,
+    z_periods = 2.0,
+    output_csv::Union{Nothing, AbstractString} = nothing,
+)
+    kx = 0.0
+    ω = 0.0
+    g = build_rect_grid(N, H)
+    caseA = constant_case_data(g; ν0 = ν0)
+    M, Bmat, Cmat = build_M_B_C_rect(kx, kz, ω, g, caseA...)
+
+    s_int = (g.y_int .+ H) ./ H
+    dx = complex.(cos.(nmode * pi .* s_int))
+    dy = zeros(ComplexF64, g.N)
+    dz = zeros(ComplexF64, g.N)
+    d = vcat(dx, dy, dz)
+
+    rhs = Bmat * d
+    ξ = M \ rhs
+    uhat = Cmat * ξ
+    u_num_amp = real.(uhat[1:g.N])
+
+    α2 = kz^2 + (nmode * pi / H)^2
+    u_exact_amp = cos.(nmode * pi .* s_int) ./ (ν0 * α2)
+    amp_relerr = relerr(u_num_amp, u_exact_amp)
+    imag_leak = maximum(abs.(imag.(uhat[1:g.N])))
+
+    zH = collect(range(0.0, z_periods; length = nz))
+    u_num_pattern = [u_num_amp[i] * cos(kz * H * zH[j]) for i in 1:g.N, j in 1:nz]
+    u_exact_pattern = [u_exact_amp[i] * cos(kz * H * zH[j]) for i in 1:g.N, j in 1:nz]
+    pattern_relerr = relerr(vec(u_num_pattern), vec(u_exact_pattern))
+
+    @printf("\n典型算例: 常系数 + kx=0 + 仅 d_x 强迫\n")
+    @printf("参数: H=%.3f, N=%d, kz=%.6f, ν0=%.4f, nmode=%d\n", H, N, kz, ν0, nmode)
+    @printf("解析预期: u(y,z) = cos(%dπ(y+H)/H) * cos(kz z) / (ν0 * α²), α² = kz² + (%dπ/H)²\n", nmode, nmode)
+    @printf("u 幅值相对误差      = %.6e\n", amp_relerr)
+    @printf("u pattern 相对误差 = %.6e\n", pattern_relerr)
+    @printf("u 数值解虚部泄漏最大值 = %.6e\n", imag_leak)
+
+    sample_ids = unique(round.(Int, range(1, g.N; length = 5)))
+    println("\n样本点对比: y/H, u_num_amp, u_exact_amp")
+    for i in sample_ids
+        @printf("% .6f   % .6e   % .6e\n", g.y_int[i] / H, u_num_amp[i], u_exact_amp[i])
+    end
+
+    if output_csv !== nothing
+        rows = Matrix{Float64}(undef, g.N * nz, 4)
+        row = 1
+        for i in 1:g.N, j in 1:nz
+            rows[row, 1] = g.y_int[i] / H
+            rows[row, 2] = zH[j]
+            rows[row, 3] = u_num_pattern[i, j]
+            rows[row, 4] = u_exact_pattern[i, j]
+            row += 1
+        end
+        writedlm(output_csv, rows, ',')
+        @printf("\n已写出 pattern CSV: %s\n", output_csv)
+        println("列顺序: y_over_H, z_over_H, u_num, u_exact")
+    end
+
+    return (;
+        y_over_H = g.y_int ./ H,
+        z_over_H = zH,
+        u_num_amp,
+        u_exact_amp,
+        u_num_pattern,
+        u_exact_pattern,
+        amp_relerr,
+        pattern_relerr,
+        imag_leak,
+    )
+end
+
 validation_result = run_internal_validation()
 println("\nvalidation_result = ", validation_result)
+
+demo_result = run_analytic_u_pattern_demo()
+println("\ndemo_result.amp_relerr = ", demo_result.amp_relerr)
+println("demo_result.pattern_relerr = ", demo_result.pattern_relerr)
