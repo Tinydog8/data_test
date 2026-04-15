@@ -260,6 +260,45 @@ function run_analytic_u_pattern_demo(;
     )
 end
 
+function save_analytic_u_pattern_plot(
+    demo_result;
+    output_png::AbstractString = "analytic_u_pattern_demo.png",
+    title_prefix::AbstractString = "Analytic u-pattern demo",
+)
+    if !isnothing(Base.find_package("CairoMakie"))
+        @eval using CairoMakie
+    else
+        error("未找到 CairoMakie；如需直接绘图，请先安装或在已有绘图库环境中运行。")
+    end
+
+    z = demo_result.z_over_H
+    y = demo_result.y_over_H
+    unum = demo_result.u_num_pattern
+    uexact = demo_result.u_exact_pattern
+    uerr = unum .- uexact
+
+    umax = max(maximum(abs.(unum)), maximum(abs.(uexact)), 1e-12)
+    emax = max(maximum(abs.(uerr)), 1e-12)
+
+    fig = Figure(size = (1200, 420), fontsize = 13)
+
+    ax1 = Axis(fig[1, 1], xlabel = "z/H", ylabel = "y/H", title = title_prefix * " - numerical")
+    hm1 = heatmap!(ax1, z, y, unum; colormap = :balance, colorrange = (-umax, umax))
+    Colorbar(fig[1, 2], hm1; label = "u_num")
+
+    ax2 = Axis(fig[1, 3], xlabel = "z/H", ylabel = "y/H", title = title_prefix * " - analytic")
+    hm2 = heatmap!(ax2, z, y, uexact; colormap = :balance, colorrange = (-umax, umax))
+    Colorbar(fig[1, 4], hm2; label = "u_exact")
+
+    ax3 = Axis(fig[1, 5], xlabel = "z/H", ylabel = "y/H", title = title_prefix * " - error")
+    hm3 = heatmap!(ax3, z, y, uerr; colormap = :balance, colorrange = (-emax, emax))
+    Colorbar(fig[1, 6], hm3; label = "u_num - u_exact")
+
+    save(output_png, fig)
+    @printf("已保存二维 pattern 图: %s\n", output_png)
+    return fig
+end
+
 validation_result = run_internal_validation()
 println("\nvalidation_result = ", validation_result)
 
