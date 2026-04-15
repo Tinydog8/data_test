@@ -283,15 +283,15 @@ function save_analytic_u_pattern_plot(
     fig = Figure(size = (1200, 420), fontsize = 13)
 
     ax1 = Axis(fig[1, 1], xlabel = "z/H", ylabel = "y/H", title = title_prefix * " - numerical")
-    hm1 = heatmap!(ax1, z, y, unum; colormap = :balance, colorrange = (-umax, umax))
+    hm1 = heatmap!(ax1, z, y, transpose(unum); colormap = :balance, colorrange = (-umax, umax))
     Colorbar(fig[1, 2], hm1; label = "u_num")
 
     ax2 = Axis(fig[1, 3], xlabel = "z/H", ylabel = "y/H", title = title_prefix * " - analytic")
-    hm2 = heatmap!(ax2, z, y, uexact; colormap = :balance, colorrange = (-umax, umax))
+    hm2 = heatmap!(ax2, z, y, transpose(uexact); colormap = :balance, colorrange = (-umax, umax))
     Colorbar(fig[1, 4], hm2; label = "u_exact")
 
     ax3 = Axis(fig[1, 5], xlabel = "z/H", ylabel = "y/H", title = title_prefix * " - error")
-    hm3 = heatmap!(ax3, z, y, uerr; colormap = :balance, colorrange = (-emax, emax))
+    hm3 = heatmap!(ax3, z, y, transpose(uerr); colormap = :balance, colorrange = (-emax, emax))
     Colorbar(fig[1, 6], hm3; label = "u_num - u_exact")
 
     save(output_png, fig)
