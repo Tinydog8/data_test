@@ -1,323 +1,301 @@
 #!/usr/bin/env julia
 
 #=
-最小 Julia 学习脚本：1D 受迫扩散方程的 resolvent analysis
-===========================================================
+最小 Julia 学习脚本：按代码块逐步运行的 resolvent analysis 入门
+===============================================================
 
-这份脚本故意只保留论文方法里“最基础、最核心”的部分：
+这份脚本专门改成“不要封装成函数，而是分块顺序执行”的形式。
+如果你使用 VS Code 的 Julia 插件，可以直接按 `# %%` 单元逐块运行。
 
-    线性系统 + 持续谐波强迫 + 频率响应 + 最大放大
+核心目标只有一个：
 
-而把下列复杂内容全部拿掉：
+    让你先完全看懂：
+    谐波强迫 -> resolvent 算子 -> SVD -> 最优 forcing / response
 
-    - 三维流动
-    - Orr-Sommerfeld / Squire 耦合
-    - 波流相互作用中的 Stokes drift
-    - 涡黏性剖面
-    - LES 数据拟合
-    - 绘图、文件输出、命令行解析等无关功能
+依旧只保留最基础模型：
 
-----------------------------------------------------------------------
-一、为什么用这个模型？
-----------------------------------------------------------------------
+    ∂u/∂t = ν ∂²u/∂y² + d(y, t),    y ∈ (0, 1)
+    u(0, t) = 0,  u(1, t) = 0
 
-论文研究的是更复杂的 resolvent 问题：
+如果令
 
-    û = T(kx, kz, ω) d̂
+    d(y, t) = d̂(y; ω) exp(-iωt),
+    u(y, t) = û(y; ω) exp(-iωt),
 
-其中 T 是一个由线性化 Navier-Stokes / CL 方程构成的传递算子。
+那么可得频域方程
 
-要学会它，最关键的不是一上来就处理复杂流动，而是先真正理解：
+    (iωI - ν∂yy) û = d̂
 
-    1. 什么是“谐波强迫”
-    2. 什么是“频率响应 / resolvent operator”
-    3. 为什么要对这个算子做 SVD
-    4. 什么叫“最容易被放大的 forcing / response”
+于是 resolvent operator 为
 
-下面的极简模型已经完整包含了这四点。
+    H(ω) = (iωI - ν∂yy)^(-1)
 
-----------------------------------------------------------------------
-二、所求解的基础方程
-----------------------------------------------------------------------
+在满足边界条件的标准化正弦基
 
-考虑区间 y ∈ (0, 1) 上的一维受迫扩散方程：
+    ϕ_n(y) = √2 sin(nπy)
 
-    ∂u/∂t = ν ∂²u/∂y² + d(y, t),
+下，有
 
-配 Dirichlet 边界条件：
+    ∂yy ϕ_n = -(nπ)^2 ϕ_n
 
-    u(0, t) = 0,   u(1, t) = 0.
+因此第 n 个模态对应的 resolvent 增益为
 
-这里：
-
-    u(y, t) : 系统响应
-    d(y, t) : 外部强迫
-    ν       : 扩散系数（对应流体问题里的黏性/耗散）
-
-如果施加单频谐波强迫：
-
-    d(y, t) = d̂(y; ω) exp(-i ω t),
-
-并设系统响应也具有相同频率：
-
-    u(y, t) = û(y; ω) exp(-i ω t),
-
-代回原方程后得到频域问题：
-
-    (i ω I - ν ∂yy) û = d̂.
-
-于是 resolvent operator 定义为：
-
-    H(ω) = (i ω I - ν ∂yy)^(-1),
-
-所以有：
-
-    û = H(ω) d̂.
-
-这就是论文中 resolvent 公式最本质的原型。
-
-----------------------------------------------------------------------
-三、为什么这个模型还能“精确验证”？
-----------------------------------------------------------------------
-
-由于边界条件是 u(0)=u(1)=0，最自然的基底是正弦基：
-
-    ϕ_n(y) = √2 sin(n π y),   n = 1, 2, 3, ...
-
-它满足：
-
-    ∂yy ϕ_n = -(n π)^2 ϕ_n.
-
-因此在这个基底下，算子完全对角化：
-
-    H_n(ω) = 1 / (i ω + ν (n π)^2).
-
-于是第 n 个模态的放大量（也就是 singular value）有解析表达式：
-
+    H_n(ω) = 1 / (iω + ν(nπ)^2)
     σ_n(ω) = |H_n(ω)|
-           = 1 / sqrt(ω^2 + [ν (n π)^2]^2).
+           = 1 / sqrt(ω^2 + [ν(nπ)^2]^2)
 
-这意味着：
-
-    - 最大放大一定来自 n = 1 的最低模态
-    - 数值结果可以直接对照解析结果
-    - 这是学习 resolvent 最理想的基础例子
-
-----------------------------------------------------------------------
-四、这和论文的关系是什么？
-----------------------------------------------------------------------
-
-这份代码是“论文方法的最小骨架”：
-
-    当前脚本:
-        标量 PDE  ->  一个 resolvent 算子 H(ω)
-
-    论文中的系统:
-        向量 PDE  ->  一个矩阵微分算子 T(kx, kz, ω)
-
-真正升级到论文时，你只需要逐步增加三类复杂度：
-
-    (1) 把标量 u 改成状态向量 q = [v, η] 或速度/涡量组合
-    (2) 把 ν ∂yy 改成含平均流、波数、Stokes drift 的线性算子
-    (3) 把单纯 H(ω) 改成输入-输出形式 T = C(iωE - F)^(-1)B
-
-但“谐波强迫 -> resolvent -> SVD -> 最优响应”的核心逻辑完全不变。
-
+这正是最适合入门和验证的极简案例。
 =#
+
+# %%
+# --------------------------------------------------------------------
+# 第 0 块：加载库
+# --------------------------------------------------------------------
+# 这里只保留最必要的两个标准库：
+# - LinearAlgebra: 用于 SVD 和范数
+# - Printf: 用于更整齐地打印结果
 
 using LinearAlgebra
 using Printf
 
+
+# %%
 # --------------------------------------------------------------------
-# 1. 构造正弦基下的最小 resolvent 模型
+# 第 1 块：设置最少参数
 # --------------------------------------------------------------------
+# 这一块只做“实验设定”，建议先单独运行并观察变量。
+#
+# 你可以先改：
+#   - nu    : 扩散/耗散强度
+#   - omega : 谐波强迫角频率
+#   - nmodes: 保留多少个正弦模态
+#
+# 这个模型里没有网格离散误差，因为我们直接在正弦本征基里工作。
+# nmodes 只是“保留多少个模态做展示”，不是 PDE 离散精度的来源。
 
-"""
-    build_resolvent(nu, omega, nmodes)
+nu     = 0.02
+omega  = 1.00
+nmodes = 8
 
-在正弦基 ϕ_n(y)=√2 sin(nπy) 下构造 resolvent 矩阵。
+# 物理空间网格仅用于后面把模态重构成曲线形状，不参与求解。
+ygrid = range(0.0, 1.0; length = 201)
 
-数学上：
+println("参数设置完成：")
+@printf("nu     = %.6f\n", nu)
+@printf("omega  = %.6f\n", omega)
+@printf("nmodes = %d\n", nmodes)
 
-    H_n(ω) = 1 / (iω + ν(nπ)^2)
 
-因为不同正弦模态彼此独立，所以 H 在该基底下是对角矩阵。
+# %%
+# --------------------------------------------------------------------
+# 第 2 块：写出 Laplacian 在正弦基下的本征值
+# --------------------------------------------------------------------
+# 边界条件 u(0)=u(1)=0 对应最自然的基底：
+#
+#     ϕ_n(y) = √2 sin(nπy),   n = 1,2,3,...
+#
+# 且
+#
+#     ∂yy ϕ_n = -(nπ)^2 ϕ_n
+#
+# 因此 Laplacian 的“正特征值大小”记作
+#
+#     λ_n = (nπ)^2
+#
+# 在这个基底下，原方程完全解耦成若干个标量代数方程。
 
-返回值：
+lambdas = [(n * π)^2 for n in 1:nmodes]
 
-    H        : resolvent 矩阵（复数对角矩阵）
-    lambdas  : 每个模态对应的 Laplacian 本征值 (nπ)^2
-"""
-function build_resolvent(nu::Float64, omega::Float64, nmodes::Int)
-    lambdas = [(n * π)^2 for n in 1:nmodes]
-
-    # 对角元素对应:
-    #     H_n = 1 / (iω + ν λ_n)
-    # 其中 λ_n = (nπ)^2
-    diagonal_entries = ComplexF64[
-        1 / (im * omega + nu * λ) for λ in lambdas
-    ]
-
-    H = Diagonal(diagonal_entries)
-    return H, lambdas
+println("\n每个模态对应的 λ_n = (nπ)^2：")
+for n in 1:nmodes
+    @printf("mode %d : lambda = %.10f\n", n, lambdas[n])
 end
 
 
-"""
-    analytic_gains(nu, omega, lambdas)
-
-给出每个模态增益的解析表达式：
-
-    σ_n(ω) = 1 / sqrt(ω^2 + [ν λ_n]^2)
-"""
-function analytic_gains(nu::Float64, omega::Float64, lambdas::Vector{Float64})
-    return [1 / sqrt(omega^2 + (nu * λ)^2) for λ in lambdas]
-end
-
-
-"""
-    sine_mode(n, y)
-
-标准化正弦基函数：
-
-    ϕ_n(y) = √2 sin(nπy)
-
-选这个标准化是为了使 L2 内积下各模态正交归一，便于解释
-“forcing 的单位能量”和“response 的放大量”。
-"""
-@inline function sine_mode(n::Int, y::Float64)
-    return sqrt(2.0) * sin(n * π * y)
-end
-
-
-"""
-    reconstruct_field(coeffs, ygrid)
-
-将模态系数重构为物理空间中的函数值：
-
-    u(y) = Σ coeffs[n] ϕ_n(y)
-
-这里 coeffs 可以是 forcing 的模态系数，也可以是 response 的模态系数。
-"""
-function reconstruct_field(coeffs::AbstractVector{ComplexF64}, ygrid)
-    values = zeros(ComplexF64, length(ygrid))
-    for (j, y) in enumerate(ygrid)
-        acc = 0.0 + 0.0im
-        for n in eachindex(coeffs)
-            acc += coeffs[n] * sine_mode(n, y)
-        end
-        values[j] = acc
-    end
-    return values
-end
-
-
+# %%
 # --------------------------------------------------------------------
-# 2. 主程序：构造模型、做 SVD、对照解析结果
+# 第 3 块：构造 resolvent 矩阵 H(ω)
 # --------------------------------------------------------------------
+# 频域问题：
+#
+#     (iωI - ν∂yy) û = d̂
+#
+# 由于
+#
+#     ∂yy ϕ_n = -(nπ)^2 ϕ_n = -λ_n ϕ_n
+#
+# 所以第 n 个模态上有
+#
+#     (iω + νλ_n) û_n = d̂_n
+#
+# 因而
+#
+#     û_n = H_n d̂_n
+#     H_n = 1 / (iω + νλ_n)
+#
+# 也就是说，resolvent H 在这组基底下是一个对角矩阵。
 
-function main()
-    # -----------------------------
-    # 可直接修改的最少参数
-    # -----------------------------
-    nu     = 0.02     # 扩散系数/耗散强度
-    omega  = 1.00     # 谐波强迫角频率
-    nmodes = 8        # 截断到前 nmodes 个正弦模态
+diagonal_entries = ComplexF64[]
+for λ in lambdas
+    push!(diagonal_entries, 1 / (im * omega + nu * λ))
+end
 
-    # 物理空间网格只用于把模态系数重构成函数值，便于理解结果。
-    # 它不参与求解，因此不会影响数值精度。
-    ygrid = range(0.0, 1.0; length = 201)
+H = Diagonal(diagonal_entries)
 
-    # 构造 resolvent
-    H, lambdas = build_resolvent(nu, omega, nmodes)
+println("\nresolvent 对角元 H_n：")
+for n in 1:nmodes
+    @printf("mode %d : Re(H_n) = % .10e, Im(H_n) = % .10e\n",
+            n, real(H[n, n]), imag(H[n, n]))
+end
 
-    # 对 resolvent 做 SVD：
-    #     H = U Σ V*
-    #
-    # 其中：
-    #     V 的第一列 = 最优 forcing 方向
-    #     U 的第一列 = 最优 response 方向
-    #     Σ[1]       = 最大放大量
-    #
-    # 对本问题而言，H 是对角矩阵，因此最优 forcing 就是第一模态。
-    F = svd(Matrix(H))
-    numeric_gains = F.S
-    exact_gains = analytic_gains(nu, omega, lambdas)
 
-    # 由于本问题的最优 forcing 就是第一正弦模态，下面显式构造它，
-    # 以便把“模态空间中的向量”重构到物理空间中。
-    optimal_forcing_coeffs = zeros(ComplexF64, nmodes)
-    optimal_forcing_coeffs[1] = 1.0 + 0.0im
+# %%
+# --------------------------------------------------------------------
+# 第 4 块：写出解析增益，并与 resolvent 的 SVD 对照
+# --------------------------------------------------------------------
+# 由于 H 是对角矩阵，且各模态独立，
+# 第 n 个模态的 singular value 就是 |H_n|：
+#
+#     σ_n = |H_n|
+#         = 1 / sqrt(ω^2 + (νλ_n)^2)
+#
+# 这是我们最重要的解析 benchmark。
 
-    # 对应的最优响应为:
-    #     û = H f̂
-    optimal_response_coeffs = H * optimal_forcing_coeffs
+exact_gains = Float64[]
+for λ in lambdas
+    push!(exact_gains, 1 / sqrt(omega^2 + (nu * λ)^2))
+end
 
-    # 数值验证：
-    # 对单位范数 forcing，响应范数应等于最大 singular value。
-    gain_from_direct_solve = norm(optimal_response_coeffs) / norm(optimal_forcing_coeffs)
+# 数值上直接对 H 做 SVD。
+#
+# H = U Σ V*
+#
+# 含义：
+# - V 的列向量：forcing 空间中的最优方向
+# - U 的列向量：response 空间中的最优方向
+# - Σ 的对角元：各方向上的放大率
 
-    # 重构物理空间中的 forcing / response 形状。
-    forcing_profile  = reconstruct_field(optimal_forcing_coeffs, ygrid)
-    response_profile = reconstruct_field(optimal_response_coeffs, ygrid)
+F = svd(Matrix(H))
+numeric_gains = F.S
 
-    # -----------------------------
-    # 输出结果
-    # -----------------------------
-    println("==============================================================")
-    println("最小 resolvent 学习示例：1D 受迫扩散方程")
-    println("==============================================================")
-    @printf("nu     = %.6f\n", nu)
-    @printf("omega  = %.6f\n", omega)
-    @printf("nmodes = %d\n", nmodes)
-    println()
+println("\n模态增益对照（数值 SVD vs 解析公式）")
+println("--------------------------------------------------------------")
+@printf("%6s  %18s  %18s  %14s\n", "mode", "numeric sigma", "exact sigma", "rel. error")
+for n in 1:nmodes
+    relerr = abs(numeric_gains[n] - exact_gains[n]) / exact_gains[n]
+    @printf("%6d  %18.10e  %18.10e  %14.6e\n",
+            n, numeric_gains[n], exact_gains[n], relerr)
+end
 
-    println("模态增益对照（数值 SVD vs 解析公式）")
-    println("--------------------------------------------------------------")
-    @printf("%6s  %18s  %18s  %14s\n", "mode", "numeric sigma", "exact sigma", "rel. error")
+
+# %%
+# --------------------------------------------------------------------
+# 第 5 块：找出“最优 forcing”与“最优 response”
+# --------------------------------------------------------------------
+# 对本问题而言，理论上最大增益必然出现在最低模态 n=1。
+# 所以：
+#
+#     最优 forcing  = 第一正弦模态
+#     最优 response = H 乘以该 forcing 后得到的响应
+#
+# 这里先在“模态系数空间”中表示：
+#
+#     forcing_coeffs  = [1, 0, 0, ..., 0]^T
+#     response_coeffs = H * forcing_coeffs
+#
+# 这一步最适合帮助理解：
+# “forcing 的方向”和“response 的方向”在基础问题里其实非常清楚。
+
+optimal_forcing_coeffs = zeros(ComplexF64, nmodes)
+optimal_forcing_coeffs[1] = 1.0 + 0.0im
+
+optimal_response_coeffs = H * optimal_forcing_coeffs
+
+gain_from_direct_solve = norm(optimal_response_coeffs) / norm(optimal_forcing_coeffs)
+
+println("\n最重要的三个量：")
+@printf("最大奇异值 sigma_1      = %.10e\n", numeric_gains[1])
+@printf("直接计算得到的响应增益   = %.10e\n", gain_from_direct_solve)
+@printf("二者之差                 = %.6e\n",
+        abs(numeric_gains[1] - gain_from_direct_solve))
+
+
+# %%
+# --------------------------------------------------------------------
+# 第 6 块：把模态系数重构到物理空间
+# --------------------------------------------------------------------
+# 前面我们在“模态空间”工作，现在把 forcing / response 还原回物理空间：
+#
+#     f(y) = Σ a_n ϕ_n(y)
+#     u(y) = Σ b_n ϕ_n(y)
+#
+# 其中
+#
+#     ϕ_n(y) = √2 sin(nπy)
+#
+# 这一块故意不用函数封装，而是直接展开写循环，方便你逐行看懂。
+
+forcing_profile  = zeros(ComplexF64, length(ygrid))
+response_profile = zeros(ComplexF64, length(ygrid))
+
+for j in eachindex(ygrid)
+    y = ygrid[j]
+
+    forcing_sum  = 0.0 + 0.0im
+    response_sum = 0.0 + 0.0im
+
     for n in 1:nmodes
-        relerr = abs(numeric_gains[n] - exact_gains[n]) / exact_gains[n]
-        @printf("%6d  %18.10e  %18.10e  %14.6e\n",
-                n, numeric_gains[n], exact_gains[n], relerr)
+        phi_n = sqrt(2.0) * sin(n * π * y)
+        forcing_sum  += optimal_forcing_coeffs[n]  * phi_n
+        response_sum += optimal_response_coeffs[n] * phi_n
     end
-    println()
 
-    println("最重要的三个结论")
-    println("--------------------------------------------------------------")
-    @printf("1) 最大放大量 sigma_1 = %.10e\n", numeric_gains[1])
-    @printf("2) 直接求解得到的增益    = %.10e\n", gain_from_direct_solve)
-    @printf("3) 二者之差              = %.6e\n",
-            abs(numeric_gains[1] - gain_from_direct_solve))
-    println()
+    forcing_profile[j]  = forcing_sum
+    response_profile[j] = response_sum
+end
 
-    println("物理解释")
-    println("--------------------------------------------------------------")
-    println("1. 最优 forcing 是第一正弦模态 sin(pi y)。")
-    println("2. 原因是低阶模态的扩散衰减最弱，因此最容易被持续谐波强迫放大。")
-    println("3. 当 omega 变大时，所有模态的增益都会下降。")
-    println("4. 当 nu 变大时，高阶模态会被更强烈地抑制。")
-    println()
+println("\n已完成 forcing / response 的物理空间重构。")
 
-    println("给出少量物理空间采样值，帮助理解“最优 forcing / response 形状”")
-    println("--------------------------------------------------------------")
-    @printf("%8s  %18s  %18s\n", "y", "forcing(real)", "response(real)")
-    sample_ids = [1, 41, 81, 101, 121, 161, 201]
-    for idx in sample_ids
-        @printf("%8.3f  %18.10e  %18.10e\n",
-                ygrid[idx], real(forcing_profile[idx]), real(response_profile[idx]))
-    end
-    println()
 
-    println("如何把这份基础代码升级到论文问题？")
-    println("--------------------------------------------------------------")
-    println("步骤 1: 把标量 u 改成状态向量 q（例如速度/涡量变量）。")
-    println("步骤 2: 把标量算子 nu*d²/dy² 改成含平均流和波数的线性算子。")
-    println("步骤 3: 把 H(omega) 改成 T(kx, kz, omega) 的输入-输出形式。")
-    println("步骤 4: 再对每个 (kx, kz, omega) 做 SVD，寻找主导放大结构。")
-    println()
+# %%
+# --------------------------------------------------------------------
+# 第 7 块：打印少量采样点，观察最优形状
+# --------------------------------------------------------------------
+# 理论上：
+# - 最优 forcing 应该就是第一正弦模态 sin(πy)
+# - response 与它形状相同，只是乘上一个复数增益 H_1
+#
+# 这里不做绘图，只打印若干点，保持脚本极简。
 
-    println("这份脚本的用途不是复现论文，而是让你先把 resolvent 的最小骨架学扎实。")
+println("\n物理空间采样值（实部）")
+println("--------------------------------------------------------------")
+@printf("%8s  %18s  %18s\n", "y", "forcing(real)", "response(real)")
+
+sample_ids = [1, 41, 81, 101, 121, 161, 201]
+for idx in sample_ids
+    @printf("%8.3f  %18.10e  %18.10e\n",
+            ygrid[idx], real(forcing_profile[idx]), real(response_profile[idx]))
 end
 
 
-main()
+# %%
+# --------------------------------------------------------------------
+# 第 8 块：结果解释
+# --------------------------------------------------------------------
+# 这一块不做新计算，只把前面的结果整理成可以直接学习的结论。
+
+println("\n结论说明")
+println("--------------------------------------------------------------")
+println("1. 这个最小模型中的 resolvent 算子在正弦基下完全对角化。")
+println("2. 因此每个模态彼此独立，singular value 可直接由解析公式得到。")
+println("3. 最优 forcing 是第一模态，因为它的耗散最弱。")
+println("4. 当 omega 增大时，所有模态响应都会减弱。")
+println("5. 当 nu 增大时，高阶模态会更快被抑制。")
+println()
+println("把它升级到论文问题时，需要逐步加入：")
+println("  - 状态向量而不是标量变量")
+println("  - 平均流、波数和耦合项")
+println("  - 输入矩阵 B、输出矩阵 C")
+println("  - 对每个 (kx, kz, omega) 的 resolvent 做 SVD")
+println()
+println("这份脚本的目的不是复现论文，而是让你逐块跑通最基础的 resolvent 思想。")
