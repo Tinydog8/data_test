@@ -140,8 +140,12 @@ function make_nearshore_profiles(
     ustar::Real = 1.0,
     La_t::Real = 0.2,
     k0H::Real = 3.5,
-    U_surface::Real = 0.0,
-    current_delta_over_H::Real = 0.08,
+    U_surface::Real = 1.0,
+    U_center::Real = 0.5,
+    bottom_roughness_over_H::Real = 1.0e-4,
+    surface_roughness_over_H::Real = 1.0e-4,
+    log_stitch_center_over_H::Real = 0.5,
+    log_blend_half_width_over_H::Real = 0.04,
     nuT_mean::Real = 0.07,
     nu_molecular::Real = 1.0e-6,
     finite_depth_stokes::Bool = true,
@@ -156,8 +160,19 @@ function make_nearshore_profiles(
 
     function eulerian_current(y)
         s = wall_coordinate(y)
-        delta = max(Float64(current_delta_over_H), 1e-8)
-        return Float64(U_surface) * (1 - exp(-s / delta)) / (1 - exp(-1 / delta))
+        z0b = max(Float64(bottom_roughness_over_H), 1e-10)
+        z0s = max(Float64(surface_roughness_over_H), 1e-10)
+        s_match = clamp(Float64(log_stitch_center_over_H), 0.05, 0.95)
+
+        bottom_shape = log((s + z0b) / z0b) / log((s_match + z0b) / z0b)
+        surface_shape = log(((1 - s) + z0s) / z0s) / log(((1 - s_match) + z0s) / z0s)
+
+        U_bottom = Float64(U_center) * bottom_shape
+        U_surface_branch = Float64(U_surface) - (Float64(U_surface) - Float64(U_center)) * surface_shape
+
+        hw = max(Float64(log_blend_half_width_over_H), 1e-6)
+        blend_to_surface = 0.5 * (1 + tanh((s - s_match) / hw))
+        return (1 - blend_to_surface) * U_bottom + blend_to_surface * U_surface_branch
     end
 
     Us0 = Float64(ustar) / max(Float64(La_t)^2, 1e-30)
@@ -433,7 +448,12 @@ function run_nearshore_demo(;
     ustar::Real = 1.0,
     La_t::Real = 0.2,
     k0H::Real = 3.5,
-    U_surface::Real = 0.0,
+    U_surface::Real = 1.0,
+    U_center::Real = 0.5,
+    bottom_roughness_over_H::Real = 1.0e-4,
+    surface_roughness_over_H::Real = 1.0e-4,
+    log_stitch_center_over_H::Real = 0.5,
+    log_blend_half_width_over_H::Real = 0.04,
     nuT_mean::Real = 0.07,
     nu_molecular::Real = 1e-6,
     stokes_bottom_damping_power::Real = 1.0,
@@ -444,6 +464,11 @@ function run_nearshore_demo(;
         La_t = La_t,
         k0H = k0H,
         U_surface = U_surface,
+        U_center = U_center,
+        bottom_roughness_over_H = bottom_roughness_over_H,
+        surface_roughness_over_H = surface_roughness_over_H,
+        log_stitch_center_over_H = log_stitch_center_over_H,
+        log_blend_half_width_over_H = log_blend_half_width_over_H,
         nuT_mean = nuT_mean,
         nu_molecular = nu_molecular,
         stokes_bottom_damping_power = stokes_bottom_damping_power)

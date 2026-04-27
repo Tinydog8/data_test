@@ -20,8 +20,12 @@ const NU_WATER_DIM = 1.0e-6
 const BOTTOM_BC_DEMO = :no_slip
 const SURFACE_BC_DEMO = :stress_free
 
-const U_SURFACE_DEMO = 0.0
-const CURRENT_DELTA_OVER_H_DEMO = 0.08
+const U_SURFACE_DEMO = 1.0
+const U_CENTER_DEMO = 0.5
+const Z0_BOTTOM_OVER_H_DEMO = 1.0e-4
+const Z0_SURFACE_OVER_H_DEMO = 1.0e-4
+const LOG_STITCH_CENTER_OVER_H_DEMO = 0.5
+const LOG_STITCH_HALF_WIDTH_OVER_H_DEMO = 0.04
 const STOKES_BOTTOM_DAMPING_POWER_DEMO = 1.0
 
 const RECT_COLLOC_STAMP = "2026-04-27-nearshore-solid-wall"
@@ -344,10 +348,31 @@ y_over_H_w = g_rect.y_w ./ H_demo
 s_v = @. clamp((g_rect.y_v + H_demo) / H_demo, 0.0, 1.0)
 s_w = @. clamp((g_rect.y_w + H_demo) / H_demo, 0.0, 1.0)
 
-# Eulerian mean current: U(-H)=0, U(0)=U_SURFACE_DEMO.
-delta_c = max(CURRENT_DELTA_OVER_H_DEMO, 1e-8)
-Uv = @. U_SURFACE_DEMO * (1.0 - exp(-s_v / delta_c)) / (1.0 - exp(-1.0 / delta_c))
-Uw = @. U_SURFACE_DEMO * (1.0 - exp(-s_w / delta_c)) / (1.0 - exp(-1.0 / delta_c))
+# Eulerian mean current:
+# Nearshore wind-driven flow with bottom friction is approximated by two log layers:
+#   lower half: bottom-wall log law, U(-H)=0 and U(-H/2)=U_CENTER_DEMO
+#   upper half: mirror surface log law, U(-H/2)=U_CENTER_DEMO and U(0)=U_SURFACE_DEMO
+# A narrow tanh blending around the mid-depth avoids a derivative jump on the Chebyshev grid.
+z0b = max(Z0_BOTTOM_OVER_H_DEMO, 1e-10)
+z0s = max(Z0_SURFACE_OVER_H_DEMO, 1e-10)
+s_match = clamp(LOG_STITCH_CENTER_OVER_H_DEMO, 0.05, 0.95)
+blend_hw = max(LOG_STITCH_HALF_WIDTH_OVER_H_DEMO, 1e-6)
+
+function stitched_log_current(s::Real)
+    sc = clamp(Float64(s), 0.0, 1.0)
+
+    bottom_shape = log((sc + z0b) / z0b) / log((s_match + z0b) / z0b)
+    surface_shape = log(((1.0 - sc) + z0s) / z0s) / log(((1.0 - s_match) + z0s) / z0s)
+
+    U_bottom = U_CENTER_DEMO * bottom_shape
+    U_surface_branch = U_SURFACE_DEMO - (U_SURFACE_DEMO - U_CENTER_DEMO) * surface_shape
+
+    blend = 0.5 * (1.0 + tanh((sc - s_match) / blend_hw))
+    return (1.0 - blend) * U_bottom + blend * U_surface_branch
+end
+
+Uv = stitched_log_current.(s_v)
+Uw = stitched_log_current.(s_w)
 
 # Finite-depth Stokes drift, optionally damped to zero at the solid bottom.
 Us_surface = USTAR_DEMO / max(La_t_demo^2, 1e-30)
