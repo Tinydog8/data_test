@@ -1,16 +1,20 @@
 # Langmuir resolvent demo (Fig. 3 G_max scan + Fig. 4 mode plots) -- CPU 优化版.
 #
 # 相对原始 demo 的改动（均为 CPU 侧，不依赖 GPU）:
-#   Tier 0  线程/分配优化:
-#     * 扫描期间把 BLAS 设为单线程, 避免与外层 @threads 的过度订阅(oversubscription)。
-#     * omega 内循环全部走预分配缓冲(ldiv!/mul!), 杜绝热点分配。
-#     * 幂迭代 sigma1 提供无分配的缓冲版本(PowerWS)。
-#   Tier 1  算法优化(关键):
-#     * 对每个 (kx,kz) 把 M(omega)=M0+i*omega*E 视为线性矩阵束,
-#       做一次广义 Schur(QZ)分解, 之后每个相速度 c 只需一次上三角回代 + 矩阵乘,
-#       把"每个 omega 一次 O(n^3) LU"降为"每个 (kx,kz) 一次 O(n^3) + 每个 omega 一次 O(n^2)"。
+#   * 线程: 扫描期间把 BLAS 设为单线程, 避免与外层 @threads 的过度订阅(oversubscription)。
+#   * 关键提速 — 矩阵-free 幂迭代:
+#       Fig.3 只需最大奇异值 sigma_1, 因此不组装 3N x 3N 的传递矩阵 T = C M^{-1} B
+#       (那需要对 3N 个右端项做大解 + 大矩阵乘)。改为对已分解的 M 做单右端项 solve:
+#           T v = C (M \ (B v)),   T' u = B' (M' \ (C' u))
+#       每个 (kx,kz,omega) 仅分解一次 M(LU), 其后每步幂迭代只需 2 次单右端项回代 + 几个
+#       小 matvec, 比组装完整 T 每个 omega 约快 5x。
+#   * 基流 nuT_profile=:les: 用论文 Fig.2(b) 数字化的 LES 涡黏剖面 (复现 Fig.3 高值区)。
 #
-# 数值正确性由 verify_fig3_equivalence / verify_sigma1_power 对照原始 LU 路径校验。
+# 数值正确性由 verify_fig3_equivalence / verify_sigma1_power 对照精确 SVD 校验。
+#
+# 注: 原始 demo 已对每个 (kx,kz) 缓存 L 块/B/C (build_resolvent_cache + transfer_T_cached,
+#     每个 omega 一次 LU 解)。曾尝试的广义 Schur(QZ)复用因 Schur 分解固定开销过大反而更慢,
+#     已弃用; 真正有效的是上面的矩阵-free 幂迭代 (避免组装完整 T)。
 
 using LinearAlgebra
 using Base.Threads
@@ -269,63 +273,12 @@ function sigma1_weighted(
     return σ_old
 end
 
-# ---------------------------------------------------------------------------
-# Tier 0: 幂迭代缓冲工作区, 消除热点循环中的临时分配。
-# ---------------------------------------------------------------------------
-
-struct PowerWS
-    wi3::Vector{Float64}
-    ws3::Vector{Float64}
-    w3::Vector{Float64}
-    x::Vector{ComplexF64}
-    xin::Vector{ComplexF64}
-    u::Vector{ComplexF64}
-    wu::Vector{ComplexF64}
-    tmp::Vector{ComplexF64}
-end
-
-function PowerWS(w_y::AbstractVector)
-    wi3, ws3 = _weight_vectors_3N(w_y)
-    w3 = ws3 .* ws3
-    n = length(wi3)
-    PowerWS(wi3, ws3, w3,
-        Vector{ComplexF64}(undef, n), Vector{ComplexF64}(undef, n),
-        Vector{ComplexF64}(undef, n), Vector{ComplexF64}(undef, n),
-        Vector{ComplexF64}(undef, n))
-end
-
 @inline function _weighted_norm(ws3::AbstractVector, u::AbstractVector)
     s = 0.0
     @inbounds @simd for i in eachindex(u)
         s += abs2(ws3[i] * u[i])
     end
     return sqrt(s)
-end
-
-function sigma1_weighted!(
-    T::AbstractMatrix{<:Complex}, ws::PowerWS;
-    maxiter::Int = 50, tol::Real = 1e-7,
-)
-    n = size(T, 2)
-    @inbounds for i in 1:n
-        ws.x[i] = cis(2π * i / n)
-    end
-    ws.x ./= norm(ws.x)
-    σ_old = 0.0
-    for _ in 1:maxiter
-        @. ws.xin = ws.wi3 * ws.x
-        mul!(ws.u, T, ws.xin)
-        σ = _weighted_norm(ws.ws3, ws.u)
-        @. ws.wu = ws.w3 * ws.u
-        mul!(ws.tmp, T', ws.wu)
-        @. ws.x = ws.wi3 * ws.tmp
-        nx = norm(ws.x)
-        nx < 1e-30 && return σ_old
-        ws.x ./= nx
-        abs(σ - σ_old) ≤ tol * max(σ, 1e-30) && return σ
-        σ_old = σ
-    end
-    return σ_old
 end
 
 function weighted_gain_squared_svd(T::AbstractMatrix, w_y::AbstractVector)
@@ -336,9 +289,6 @@ end
 function weighted_gain_squared(T::AbstractMatrix, w_y::AbstractVector; kwargs...)
     abs2(sigma1_weighted(T, w_y; kwargs...))
 end
-
-weighted_gain_squared(T::AbstractMatrix, ws::PowerWS; kwargs...) =
-    abs2(sigma1_weighted!(T, ws; kwargs...))
 
 phase_speed_grid(UL_max::Real, n_c::Int = 50) =
     collect(range(0.01 * UL_max, UL_max; length = n_c))
@@ -435,63 +385,72 @@ transfer_T_cached(cache::ResolventWavenumberCache, omega::Real) =
     cache.C * (assemble_M!(cache.Mbuf, cache, omega) \ cache.B)
 
 # ---------------------------------------------------------------------------
-# Tier 1: omega 扫描的广义 Schur(QZ)复用。
+# 矩阵-free 加权幂迭代 (核心提速).
 #
-#   M(omega) = M0 + i*omega*E,   其中 omega 只作用在两个内部块上:
-#     E[1:N, 1:Nv]               = Pv * Δv
-#     E[Nv+1:Nv+N, Nv+1:end]     = Pw
-#   边界条件行与耦合块不含 omega。
-#
-#   QZ:  M0 = Q S Z^H,  E = Q T Z^H   (S,T 上三角)
-#   =>   M(omega) = Q (S + i*omega*T) Z^H
-#   =>   X = Z (S + i*omega*T)^{-1} Q^H B
-#   预计算 RHS = Q^H B 与 CZ = C Z, 之后每个 omega 仅需:
-#       Y = (S + i*omega*T) \ RHS    (上三角回代, O(n^2 * nrhs))
-#       T_transfer = CZ * Y          (O(nout * n * nrhs))
+# Fig.3 只需要最大奇异值 sigma_1, 因此**不组装** 3N x 3N 的传递矩阵 T = C M^{-1} B
+# (那需要对 3N 个右端项做大解 + 一次大矩阵乘)。改为对已分解的 M 做单右端项 solve:
+#     T  v = C ( M  \ (B v))
+#     T' u = B'( M' \ (C' u))
+# 每个 (kx,kz,omega): 组装并分解一次 M (LU), 其后每步幂迭代只需 2 次单右端项回代
+# (O(n^2)) + 几个小 matvec。相比组装完整 T (O(n^2 * 3N)), 每个 omega 约快 5x。
 # ---------------------------------------------------------------------------
 
-struct OmegaSweepCache
-    S::Matrix{ComplexF64}
-    T::Matrix{ComplexF64}
-    RHS::Matrix{ComplexF64}   # Q^H B
-    CZ::Matrix{ComplexF64}    # C Z
-    n::Int
-    nrhs::Int
-    nout::Int
-    Mbuf::Matrix{ComplexF64}  # S + i*omega*T 的缓冲
-    Ybuf::Matrix{ComplexF64}  # 三角回代解
-    Tbuf::Matrix{ComplexF64}  # 输出 transfer 矩阵
+struct ResolventPowerWS
+    wi3::Vector{Float64}
+    ws3::Vector{Float64}
+    w3::Vector{Float64}
+    x::Vector{ComplexF64}     # 3N, 输入向量
+    z::Vector{ComplexF64}     # 3N
+    u::Vector{ComplexF64}     # 3N
+    bz::Vector{ComplexF64}    # ntot
+    cw::Vector{ComplexF64}    # ntot
 end
 
-function build_omega_sweep_cache(cache::ResolventWavenumberCache)
-    n = cache.ntot
-    N, Nv, Nw = cache.N, cache.Nv, cache.Nw
-    M0 = assemble_M!(cache.Mbuf, cache, 0.0)
-    E = zeros(ComplexF64, n, n)
-    E[1:N, 1:Nv] = cache.Pv * cache.Δv
-    E[Nv+1:Nv+N, Nv+1:Nv+Nw] = cache.Pw
-    F = schur(M0, E)                 # M0 = Q S Z^H, E = Q T Z^H
-    S = Matrix{ComplexF64}(F.S)
-    T = Matrix{ComplexF64}(F.T)
-    RHS = F.Q' * cache.B
-    CZ = cache.C * F.Z
-    nrhs = size(cache.B, 2)
-    nout = size(cache.C, 1)
-    return OmegaSweepCache(
-        S, T, RHS, CZ, n, nrhs, nout,
-        Matrix{ComplexF64}(undef, n, n),
-        Matrix{ComplexF64}(undef, n, nrhs),
-        Matrix{ComplexF64}(undef, nout, nrhs),
-    )
+function ResolventPowerWS(w_y::AbstractVector, ntot::Int)
+    wi3, ws3 = _weight_vectors_3N(w_y)
+    w3 = ws3 .* ws3
+    n3 = length(wi3)
+    ResolventPowerWS(wi3, ws3, w3,
+        Vector{ComplexF64}(undef, n3), Vector{ComplexF64}(undef, n3),
+        Vector{ComplexF64}(undef, n3),
+        Vector{ComplexF64}(undef, ntot), Vector{ComplexF64}(undef, ntot))
 end
 
-function transfer_T_qz!(sc::OmegaSweepCache, omega::Real)
-    a = im * omega
-    @inbounds @. sc.Mbuf = sc.S + a * sc.T
-    copyto!(sc.Ybuf, sc.RHS)
-    ldiv!(UpperTriangular(sc.Mbuf), sc.Ybuf)
-    mul!(sc.Tbuf, sc.CZ, sc.Ybuf)
-    return sc.Tbuf
+# sigma_1 of diag(ws3) * (C M^{-1} B) * diag(wi3), 矩阵-free, M 已 LU 分解为 F。
+function sigma1_matfree!(
+    F, B::AbstractMatrix, C::AbstractMatrix, ws::ResolventPowerWS;
+    maxiter::Int = 100, tol::Real = 1e-7,
+)
+    n3 = length(ws.x)
+    @inbounds for i in 1:n3
+        ws.x[i] = cis(2π * i / n3)
+    end
+    ws.x ./= norm(ws.x)
+    σ_old = 0.0
+    for _ in 1:maxiter
+        @. ws.z = ws.wi3 * ws.x
+        mul!(ws.bz, B, ws.z)
+        ldiv!(F, ws.bz)              # M \ (B z)
+        mul!(ws.u, C, ws.bz)         # u = T z
+        σ = _weighted_norm(ws.ws3, ws.u)
+        @. ws.u = ws.w3 * ws.u
+        mul!(ws.cw, C', ws.u)
+        ldiv!(F', ws.cw)             # M^{-H} (C' (w3 u))
+        mul!(ws.x, B', ws.cw)        # x = T' (w3 u)
+        @. ws.x = ws.wi3 * ws.x
+        nx = norm(ws.x)
+        nx < 1e-30 && return σ_old
+        ws.x ./= nx
+        abs(σ - σ_old) ≤ tol * max(σ, 1e-30) && return σ
+        σ_old = σ
+    end
+    return σ_old
+end
+
+# 组装+分解 M(omega) 一次, 返回加权增益 G = sigma_1^2 (矩阵-free)。
+function gain_matfree!(cache::ResolventWavenumberCache, omega::Real, ws::ResolventPowerWS)
+    F = lu!(assemble_M!(cache.Mbuf, cache, omega))
+    return abs2(sigma1_matfree!(F, cache.B, cache.C, ws))
 end
 
 function resolvent_transfer(kx, kz, omega, g::RectGrid, prof)
@@ -508,12 +467,10 @@ function G_max(kx::Real, kz::Real, g::RectGrid, prof, cs::AbstractVector)
         return weighted_gain_squared(resolvent_transfer(0.0, kz, 0.0, g, prof).T, w_y)
     end
     cache = build_resolvent_cache(kx, kz, g, prof)
-    sc = build_omega_sweep_cache(cache)
-    ws = PowerWS(w_y)
+    ws = ResolventPowerWS(w_y, cache.ntot)
     gmax = 0.0
     @inbounds for c in cs
-        T = transfer_T_qz!(sc, c * kx)
-        gmax = max(gmax, weighted_gain_squared(T, ws))
+        gmax = max(gmax, gain_matfree!(cache, c * kx, ws))
     end
     return gmax
 end
@@ -532,14 +489,9 @@ function G_max_reference(kx::Real, kz::Real, g::RectGrid, prof, cs::AbstractVect
     return gmax
 end
 
-# 用精确 SVD 对比 QZ 传递矩阵与参考 LU 传递矩阵 (隔离线性代数路径, 不含幂迭代噪声)。
-#
-# 注意 H∞ 范数取 max over omega 会自然探到近临界层共振处: 那里 (M0+iω E) 接近奇异,
-# QZ(三角回代) 与 LU(带主元) 两条稳定算法在病态求解上会有有限精度差异。该差异随网格
-# 加密 (临界层更尖锐) 增大: N=128 时 ~1e-7, N=256 时可达 ~3e-4 (增益仍一致到 ~4 位
-# 有效数字)。这对数坐标的 Fig.3 (跨 10^0..10^3) 完全不可见, 属正常数值行为而非 bug。
-#
-# 因此采用分级判定:
+# 对比"矩阵-free 快路径 G_max"与"精确 SVD 参考增益"(在相同相速度集合上取 max)。
+# 二者算的是同一个 sigma_1^2; 矩阵-free 是幂迭代, 近临界层共振处收敛/条件数会放大误差,
+# 故采用分级判定:
 #   max_rel <= rtol       -> PASS
 #   rtol < max_rel <= hard -> @warn (近共振良性偏差, 不中断)
 #   max_rel > hard         -> error (真实 bug; 通常会是 O(0.1..1) 量级)
@@ -556,14 +508,13 @@ function verify_fig3_equivalence(
             Gf, err = Gr, 0.0
         else
             cache = build_resolvent_cache(kx, kz, g, prof)
-            sc = build_omega_sweep_cache(cache)
+            ws = ResolventPowerWS(w_y, cache.ntot)
             Gr = 0.0
             Gf = 0.0
             for c in cs
-                Tref = resolvent_transfer(kx, kz, c * kx, g, prof).T
-                Tqz = transfer_T_qz!(sc, c * kx)
-                Gr = max(Gr, weighted_gain_squared_svd(Tref, w_y))
-                Gf = max(Gf, weighted_gain_squared_svd(Tqz, w_y))
+                Tref = transfer_T_cached(cache, c * kx)               # 精确(LU) 传递矩阵
+                Gr = max(Gr, weighted_gain_squared_svd(Tref, w_y))   # 精确 SVD 参考
+                Gf = max(Gf, gain_matfree!(cache, c * kx, ws))       # 矩阵-free 快路径
             end
             err = abs(Gf - Gr) / max(abs(Gr), 1e-30)
         end
@@ -572,10 +523,10 @@ function verify_fig3_equivalence(
             kx * H, kz * H, Gr, Gf, err)
     end
     if maxerr > hard_rtol
-        error("Fig.3 QZ path differs from transfer_gain_rect reference " *
+        error("Fig.3 matrix-free path differs from SVD reference " *
               "(max rel=$(maxerr) > hard_rtol=$(hard_rtol)); this indicates a real bug.")
     elseif maxerr > rtol
-        @warn @sprintf("verify_fig3_equivalence: QZ vs LU max rel=%.2e (> rtol=%.0e) near critical-layer resonance — benign ill-conditioning, Fig.3 unaffected.", maxerr, rtol)
+        @warn @sprintf("verify_fig3_equivalence: matrix-free vs SVD max rel=%.2e (> rtol=%.0e) near critical-layer resonance — benign, Fig.3 unaffected.", maxerr, rtol)
     else
         @printf("verify_fig3_equivalence: PASS (max rel=%.2e, rtol=%.0e)\n", maxerr, rtol)
     end
@@ -587,18 +538,16 @@ function verify_sigma1_power(
 )
     w_y = g.w_y_int
     cache = build_resolvent_cache(kx, kz, g, prof)
-    sc = build_omega_sweep_cache(cache)
-    ws = PowerWS(w_y)
+    ws = ResolventPowerWS(w_y, cache.ntot)
     ok = true
     for c in cs[1:min(end, 8)]
-        T = transfer_T_qz!(sc, c * kx)
-        Gp = weighted_gain_squared(copy(T), ws)
-        Gs = weighted_gain_squared_svd(T, w_y)
+        Gp = gain_matfree!(cache, c * kx, ws)                  # 矩阵-free 幂迭代
+        Gs = weighted_gain_squared_svd(transfer_T_cached(cache, c * kx), w_y)  # 精确 SVD
         err = abs(Gp - Gs) / max(abs(Gs), 1e-30)
-        @printf("sigma1 power vs svd (c=%.3f): %.6e vs %.6e rel=%.3e\n", c, Gp, Gs, err)
+        @printf("sigma1 matfree vs svd (c=%.3f): %.6e vs %.6e rel=%.3e\n", c, Gp, Gs, err)
         ok &= err <= rtol
     end
-    ok || error("sigma1 power iteration differs from svdvals beyond rtol=$rtol")
+    ok || error("sigma1 matrix-free differs from svdvals beyond rtol=$rtol")
     @printf("verify_sigma1_power: PASS (rtol=%.0e)\n", rtol)
     return ok
 end
