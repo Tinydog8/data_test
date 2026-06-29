@@ -648,8 +648,60 @@ function choose_phase_from_v!(psi_vis::AbstractVector, phi_vis::AbstractVector, 
 end
 
 # ---------------------------------------------------------------------------
-# Langmuir profiles (Stokes + parabolic nu_T)
+# Langmuir profiles (Stokes drift + eddy viscosity nu_T)
+#
+# 涡黏 nu_T 有两种来源 (nuT_profile 关键字):
+#   :parabola  -- 理想化对称抛物线 (旧 demo 默认; 不能复现论文 Fig.3 高值区)。
+#   :les       -- 由论文 Fig.2(b) 数字化得到的 LES nu_t(y) (按 La_t 选 0.2/0.3),
+#                 用多项式光滑拟合 + 解析求导, 叠加分子黏性 1/Re_tau。
+#                 这是复现 Fig.3 量级与"小 lambda_z 高增益区"所必需的剖面。
+#
+# 数字化数据: 论文 PDF 第 11 页 Fig.2(b) 以 600 dpi 渲染后, 按曲线颜色(C0/C1)
+# 提取像素并用坐标轴刻度标定得到 (y/H, nu_t), 在 y/H in [0,-1] 上等距 41 点。
+# Fig.2(a) 的 U_L 上半部与解析 Stokes 漂流 (1/La^2)*exp(2*k0H*y/H) 基本吻合,
+# 故 U_L 仍采用该解析式 (论文亦指出欧拉平均流可忽略, U_L ~= U_s)。
 # ---------------------------------------------------------------------------
+
+const LES_NUT_Y = collect(range(0.0, -1.0; length = 41))
+const LES_NUT_LA02 = [0.0020, 0.0022, 0.0077, 0.0136, 0.0189, 0.0232, 0.0263, 0.0286,
+    0.0295, 0.0280, 0.0295, 0.0287, 0.0283, 0.0280, 0.0287, 0.0303, 0.0338, 0.0390,
+    0.0447, 0.0560, 0.0675, 0.0807, 0.0957, 0.1108, 0.1241, 0.1404, 0.1535, 0.1640,
+    0.1709, 0.1732, 0.1697, 0.1635, 0.1513, 0.1347, 0.1144, 0.0868, 0.0678, 0.0436,
+    0.0220, 0.0067, 0.0067]
+const LES_NUT_LA03 = [0.0004, 0.0094, 0.0270, 0.0331, 0.0360, 0.0335, 0.0295, 0.0260,
+    0.0260, 0.0312, 0.0462, 0.0599, 0.0838, 0.1138, 0.1454, 0.1851, 0.2326, 0.2568,
+    0.2900, 0.3192, 0.3435, 0.3623, 0.3746, 0.3807, 0.3799, 0.3729, 0.3623, 0.3417,
+    0.3190, 0.2928, 0.2708, 0.2328, 0.2009, 0.1787, 0.1368, 0.1056, 0.0827, 0.0495,
+    0.0261, 0.0087, 0.0030]
+
+function les_nut_data(La_t::Real)
+    if isapprox(La_t, 0.2; atol = 1e-6)
+        return LES_NUT_LA02
+    elseif isapprox(La_t, 0.3; atol = 1e-6)
+        return LES_NUT_LA03
+    else
+        error("digitized LES nu_t only available for La_t = 0.2 or 0.3 (got $La_t)")
+    end
+end
+
+# 最小二乘多项式拟合 (Vandermonde), 解析给出 p, p', p''。
+function _polyfit(x::AbstractVector, f::AbstractVector, deg::Int)
+    V = [x[i]^(k - 1) for i in eachindex(x), k in 1:deg+1]
+    return V \ collect(f)
+end
+_polyval(c, x) = sum(c[k] * x^(k - 1) for k in eachindex(c))
+_polyval_d(c, x) = length(c) < 2 ? zero(x) : sum((k - 1) * c[k] * x^(k - 2) for k in 2:length(c))
+_polyval_d2(c, x) = length(c) < 3 ? zero(x) : sum((k - 1) * (k - 2) * c[k] * x^(k - 3) for k in 3:length(c))
+
+# 由数字化 nu_t 在 xi=(y+H)/H in [0,1] 上拟合, 返回 (nu, dnu/dy, d2nu/dy2) 三个闭包。
+function _smooth_nuT_builders(nu_data::AbstractVector, H::Real, numol::Real; deg::Int = 10)
+    xi = (LES_NUT_Y .* H .+ H) ./ H          # = LES_NUT_Y .+ 1, in [0,1]
+    c = _polyfit(xi, nu_data, deg)
+    nu(y) = max(_polyval(c, (y / H) + 1.0), 0.0) + numol
+    dnu(y) = _polyval_d(c, (y / H) + 1.0) / H
+    d2nu(y) = _polyval_d2(c, (y / H) + 1.0) / H^2
+    return nu, dnu, d2nu
+end
 
 function build_langmuir_profiles(
     g::RectGrid;
@@ -659,6 +711,9 @@ function build_langmuir_profiles(
     ustar::Real = 1.0,
     nu_mean::Real = 0.07,
     nu_water::Real = 1e-3,
+    nuT_profile::Symbol = :parabola,
+    Reτ::Real = 1000.0,
+    nuT_polydeg::Int = 10,
 )
     y_over_H_v = g.y_v ./ H
     y_over_H_w = g.y_w ./ H
@@ -668,28 +723,42 @@ function build_langmuir_profiles(
     Usw = ustar .* Us_over_ustar_w
     Uv = zeros(Float64, length(g.y_v))
     Uw = zeros(Float64, length(g.y_w))
-    shape_v = @. 4.0 * ((g.y_v + H) / H) * (1.0 - (g.y_v + H) / H)
-    shape_w = @. 4.0 * ((g.y_w + H) / H) * (1.0 - (g.y_w + H) / H)
-    shape_v = max.(shape_v, 0.0)
-    shape_w = max.(shape_w, 0.0)
-    scale_v = nu_mean / max(mean(shape_v), 1e-30)
-    scale_w = nu_mean / max(mean(shape_w), 1e-30)
-    nuTv = scale_v .* shape_v
-    nuTw = scale_w .* shape_w
-    nu_floor = nu_water / max(ustar * H, 1e-30)
-    nuTv[1] = max(nuTv[1], nu_floor)
-    nuTv[end] = max(nuTv[end], nu_floor)
-    nuTw[1] = max(nuTw[1], nu_floor)
-    nuTw[end] = max(nuTw[end], nu_floor)
+
+    if nuT_profile == :les
+        # LES-数字化涡黏 (论文 Fig.2b): 光滑拟合 + 解析导数 + 分子黏性 1/Re_tau。
+        numol = 1.0 / Reτ
+        nu, dnu, d2nu = _smooth_nuT_builders(les_nut_data(La_t), H, numol; deg = nuT_polydeg)
+        nuTv = nu.(g.y_v); dnuTv = dnu.(g.y_v); d2nuTv = d2nu.(g.y_v)
+        nuTw = nu.(g.y_w); dnuTw = dnu.(g.y_w); d2nuTw = d2nu.(g.y_w)
+    elseif nuT_profile == :parabola
+        shape_v = @. 4.0 * ((g.y_v + H) / H) * (1.0 - (g.y_v + H) / H)
+        shape_w = @. 4.0 * ((g.y_w + H) / H) * (1.0 - (g.y_w + H) / H)
+        shape_v = max.(shape_v, 0.0)
+        shape_w = max.(shape_w, 0.0)
+        scale_v = nu_mean / max(mean(shape_v), 1e-30)
+        scale_w = nu_mean / max(mean(shape_w), 1e-30)
+        nuTv = scale_v .* shape_v
+        nuTw = scale_w .* shape_w
+        nu_floor = nu_water / max(ustar * H, 1e-30)
+        nuTv[1] = max(nuTv[1], nu_floor)
+        nuTv[end] = max(nuTv[end], nu_floor)
+        nuTw[1] = max(nuTw[1], nu_floor)
+        nuTw[end] = max(nuTw[end], nu_floor)
+        dnuTv = g.Dv * nuTv; d2nuTv = g.D2v * nuTv
+        dnuTw = g.Dw * nuTw; d2nuTw = g.D2w * nuTw
+    else
+        error("unknown nuT_profile = $nuT_profile (use :parabola or :les)")
+    end
+
     ULv = Usv
     ULw = Usw
     return (;
         Uv, Usv, nuTv,
         dUv = g.Dv * Uv, d2Uv = g.D2v * Uv, dUsv = g.Dv * Usv,
-        dnuTv = g.Dv * nuTv, d2nuTv = g.D2v * nuTv,
+        dnuTv, d2nuTv,
         Uw, Usw, nuTw,
         dUw = g.Dw * Uw, d2Uw = g.D2w * Uw, dUsw = g.Dw * Usw,
-        dnuTw = g.Dw * nuTw, d2nuTw = g.D2w * nuTw,
+        dnuTw, d2nuTw,
         UL_max = maximum(ULv),
         ULv, ULw,
     )
@@ -834,6 +903,7 @@ function run_demo(;
     run_fig3::Bool = true,
     run_fig4::Bool = true,
     outdir::String = @__DIR__,
+    nuT_profile::Symbol = :les,
 )
     nt = Threads.nthreads()
     @printf("Julia threads: %d (target %d)\n", nt, FIG3_NTHREADS)
@@ -843,9 +913,11 @@ function run_demo(;
     g_rect = build_rect_grid(N_demo, H_demo)
     @printf("[%s] sum(w_y)=%.12f (expect H=%.6f)\n", RECT_COLLOC_STAMP, sum(g_rect.w_y_int), H_demo)
 
+    @printf("eddy viscosity profile: %s\n", nuT_profile)
     prof = build_langmuir_profiles(g_rect;
         H = H_demo, La_t = La_t_demo, k0H = k0H_demo,
-        ustar = USTAR_DEMO, nu_mean = NU_T_MEAN_DEMO, nu_water = NU_WATER_DIM)
+        ustar = USTAR_DEMO, nu_mean = NU_T_MEAN_DEMO, nu_water = NU_WATER_DIM,
+        nuT_profile = nuT_profile)
     isurf_v = argmax(g_rect.y_v)
     @printf("Profiles on Chebyshev grids; UL_max=%.4f\n", prof.UL_max)
     @printf("Surface: U=%.4f, U^s=%.4f, U^L=%.4f\n",
