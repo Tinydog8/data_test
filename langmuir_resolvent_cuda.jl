@@ -27,10 +27,13 @@
 include(joinpath(@__DIR__, "langmuir_resolvent_cpu.jl"))
 
 using CUDA
-# 注意: 某些 CUDA/libcublas 版本的 cublasZgetrsBatched (批处理求解) 在 ComplexF64 + 大
-# 尺寸下会段错误。这里**不使用** getrs_batched/getrs_strided_batched, 改用 CUSOLVER 单系统
-# 求解 (CuMatrix 的 \), 仅幂迭代用久经考验的 gemm_strided_batched!。
-using CUDA.CUBLAS: gemm_strided_batched!
+# 两条求解路径:
+#   :single      逐 omega 用 CUSOLVER 单系统求解 (CuMatrix 的 \)。最稳, 已在 5.9.6 验证可用。
+#   :batched_inv 全程批处理: getrf_strided_batched + getri_strided_batched (批量求逆) +
+#                gemm_strided_batched (X=M^{-1}B, T=CX)。完全绕开会段错误的 cublasZgetrsBatched,
+#                改用 getrf/getri/gemm 批处理原语。更快, 但需先用 cuda_microtest_batched 确认
+#                你的环境下 getrf/getri 批处理不崩 (求逆在近临界层精度略差, 对数坐标 Fig.3 可接受)。
+using CUDA.CUBLAS: gemm_strided_batched!, getrf_strided_batched!, getri_strided_batched!
 
 # ---------------------------------------------------------------------------
 # 由 CPU 端 cache 构造线性束 (A, E) 以及 B, C (CPU 端, 复数双精度)。
@@ -109,6 +112,40 @@ function gmax_cuda_pencil(
     return maximum(abs2, σ)
 end
 
+# 全程批处理版: getrf + getri (批量求逆) + gemm 批处理, 绕开 cublasZgetrsBatched。
+function gmax_cuda_pencil_batched(
+    A::Matrix{ComplexF64}, E::Matrix{ComplexF64},
+    B::Matrix{ComplexF64}, C::Matrix{ComplexF64},
+    dwi3, dws3, dw3, cs::AbstractVector, kx::Real; maxiter::Int = 100,
+)
+    ntot = size(A, 1); n3 = size(B, 2); ncs = length(cs)
+    dA = CuArray(A); dE = CuArray(E); dB = CuArray(B); dC = CuArray(C)
+    iω = CuArray(ComplexF64[im * (c * kx) for c in cs])
+
+    # 1) 批量装配 + 批量 LU
+    Mb = dA .+ reshape(iω, 1, 1, ncs) .* dE                     # (ntot,ntot,ncs)
+    pivots = CuArray{Cint}(undef, ntot, ncs)
+    getrf_strided_batched!(Mb, pivots)
+
+    # 2) 批量求逆 Minv = M^{-1}
+    Minv = CuArray{ComplexF64}(undef, ntot, ntot, ncs)
+    getri_strided_batched!(Mb, Minv, pivots)
+
+    # 3) X = Minv * B (批量 gemm, B 广播到每个 batch)
+    Bb = CuArray{ComplexF64}(undef, ntot, n3, ncs); Bb .= reshape(dB, ntot, n3, 1)
+    Xb = CuArray{ComplexF64}(undef, ntot, n3, ncs)
+    gemm_strided_batched!('N', 'N', ComplexF64(1), Minv, Bb, ComplexF64(0), Xb)
+
+    # 4) T = C * X (批量 gemm, C 广播到每个 batch)
+    Cb = CuArray{ComplexF64}(undef, n3, ntot, ncs); Cb .= reshape(dC, n3, ntot, 1)
+    Tb = CuArray{ComplexF64}(undef, n3, n3, ncs)
+    gemm_strided_batched!('N', 'N', ComplexF64(1), Cb, Xb, ComplexF64(0), Tb)
+
+    # 5) 批量加权幂迭代
+    σ = _batched_sigma1_gpu(Tb, dwi3, dws3, dw3; maxiter = maxiter)
+    return maximum(abs2, σ)
+end
+
 # ---------------------------------------------------------------------------
 # 微型自检: 在小随机系统上验证 batched LU 求解原语 (getrf_batched!/getrs_batched!)
 # 在本机 CUDA.jl 版本上能正常工作。先跑这个; 若它都 segfault/报错, 说明是批处理原语
@@ -148,7 +185,12 @@ function _device_weights(w_y::AbstractVector)
     return CuArray(wi3), CuArray(ws3), CuArray(ws3 .* ws3)
 end
 
-function G_max_cuda(kx::Real, kz::Real, g::RectGrid, prof, cs::AbstractVector; maxiter::Int = 200)
+_pencil_gain(solve::Symbol, args...; kwargs...) =
+    solve === :batched_inv ? gmax_cuda_pencil_batched(args...; kwargs...) :
+    gmax_cuda_pencil(args...; kwargs...)
+
+function G_max_cuda(kx::Real, kz::Real, g::RectGrid, prof, cs::AbstractVector;
+    maxiter::Int = 100, solve::Symbol = :single)
     w_y = g.w_y_int
     if abs(kx) < 1e-14
         # 流向不变模态: 单点, 直接走 CPU (cheap)
@@ -157,7 +199,7 @@ function G_max_cuda(kx::Real, kz::Real, g::RectGrid, prof, cs::AbstractVector; m
     cache = build_resolvent_cache(kx, kz, g, prof)
     A, E = _build_pencil(cache)
     dwi3, dws3, dw3 = _device_weights(w_y)
-    return gmax_cuda_pencil(A, E, cache.B, cache.C, dwi3, dws3, dw3, cs, kx; maxiter = maxiter)
+    return _pencil_gain(solve, A, E, cache.B, cache.C, dwi3, dws3, dw3, cs, kx; maxiter = maxiter)
 end
 
 # ---------------------------------------------------------------------------
@@ -167,7 +209,7 @@ end
 function scan_Gmax_map_cuda(
     g::RectGrid, prof,
     lambda_x_over_H::AbstractVector, lambda_z_over_H::AbstractVector, cs::AbstractVector;
-    H::Real, chunk_pairs::Int = 64, maxiter::Int = 200,
+    H::Real, chunk_pairs::Int = 64, maxiter::Int = 100, solve::Symbol = :single,
 )
     CUDA.functional() || error("CUDA 不可用 (CUDA.functional()==false); 需在装有 NVIDIA GPU 的机器上运行。")
     nx, nz = length(lambda_x_over_H), length(lambda_z_over_H)
@@ -214,7 +256,7 @@ function scan_Gmax_map_cuda(
                     kz = 2π / (lambda_z_over_H[iz] * H)
                     Gm[iz, ix] = weighted_gain_squared(resolvent_transfer(0.0, kz, 0.0, g, prof).T, g.w_y_int)
                 else
-                    Gm[iz, ix] = gmax_cuda_pencil(As[s], Es[s], Bs[s], Cs[s],
+                    Gm[iz, ix] = _pencil_gain(solve, As[s], Es[s], Bs[s], Cs[s],
                         dwi3, dws3, dw3, cs, kxs[s]; maxiter = maxiter)
                 end
             end
@@ -253,12 +295,12 @@ end
 # 计时对比: 一小块网格上 CPU vs GPU 扫描。
 # ---------------------------------------------------------------------------
 function bench_cuda(g::RectGrid, prof; nlx::Int = 8, nlz::Int = 8,
-    ncs::Int = 50, H::Real = 1.0)
+    ncs::Int = 50, H::Real = 1.0, solve::Symbol = :single)
     cs = phase_speed_grid(prof.UL_max, ncs)
     lx = logrange10(0.3, 30.0, nlx); lz = logrange10(0.1, 20.0, nlz)
     npairs = nlx * nlz
     # warmup
-    G_max_cuda(2π / 5, 2π / 0.8, g, prof, cs); G_max(2π / 5, 2π / 0.8, g, prof, cs)
+    G_max_cuda(2π / 5, 2π / 0.8, g, prof, cs; solve = solve); G_max(2π / 5, 2π / 0.8, g, prof, cs)
 
     # 诊断: 仅 CPU 端束构造 (并行) 的耗时, 衡量 GPU 版的"地板"
     blas_saved = BLAS.get_num_threads(); BLAS.set_num_threads(1)
@@ -273,14 +315,38 @@ function bench_cuda(g::RectGrid, prof; nlx::Int = 8, nlz::Int = 8,
     end
     BLAS.set_num_threads(blas_saved)
 
-    t_gpu = @elapsed Gg = scan_Gmax_map_cuda(g, prof, lx, lz, cs; H = H)
+    t_gpu = @elapsed Gg = scan_Gmax_map_cuda(g, prof, lx, lz, cs; H = H, solve = solve)
     t_cpu = @elapsed Gc = scan_Gmax_map(g, prof, lx, lz, cs; H = H, blas_threads = 1)
     rel = maximum(abs.(Gg .- Gc) ./ max.(abs.(Gc), 1e-30))
-    @printf("\nbench_cuda %dx%d=%d pairs x %d cs  (N=%d, %d threads):\n",
-        nlx, nlz, npairs, ncs, g.N, Threads.nthreads())
+    @printf("\nbench_cuda %dx%d=%d pairs x %d cs  (N=%d, %d threads, solve=%s):\n",
+        nlx, nlz, npairs, ncs, g.N, Threads.nthreads(), solve)
     @printf("  CPU 束构造(并行, GPU 版地板) : %.1f s\n", t_build)
     @printf("  GPU 全程                     : %.1f s\n", t_gpu)
     @printf("  CPU 全程                     : %.1f s\n", t_cpu)
     @printf("  speedup x%.2f   (max rel %.2e)\n", t_cpu / t_gpu, rel)
     return (; t_build, t_gpu, t_cpu, rel)
+end
+
+# ---------------------------------------------------------------------------
+# 微型自检 (批处理路径): 验证 getrf_strided_batched + getri_strided_batched + gemm 在本机
+# 不崩、且数值正确。若 PASS, 可用 solve=:batched_inv 获得全程批处理加速。
+# ---------------------------------------------------------------------------
+function cuda_microtest_batched(; n::Int = 256, ncs::Int = 8)
+    CUDA.functional() || error("CUDA 不可用。")
+    println("cuda_microtest_batched: n=$n, batch=$ncs (getrf+getri+gemm strided batched)")
+    Ah = [Matrix{ComplexF64}(I, n, n) .+ 0.1 .* randn(ComplexF64, n, n) for _ in 1:ncs]
+    Mb = CuArray{ComplexF64}(undef, n, n, ncs)
+    for j in 1:ncs
+        @views Mb[:, :, j] .= CuArray(Ah[j])
+    end
+    pivots = CuArray{Cint}(undef, n, ncs)
+    getrf_strided_batched!(Mb, pivots); CUDA.synchronize()
+    Minv = CuArray{ComplexF64}(undef, n, n, ncs)
+    getri_strided_batched!(Mb, Minv, pivots); CUDA.synchronize()
+    Mih = Array(Minv)
+    err = maximum(j -> norm(Mih[:, :, j] - inv(Ah[j])) / norm(inv(Ah[j])), 1:ncs)
+    ok = err < 1e-7
+    @printf("  getrf+getri batched inverse: rel err = %.3e -> %s\n", err, ok ? "OK" : "FAIL")
+    println("  -> 若 OK 且不段错误, 可用 solve=:batched_inv 加速。")
+    return ok
 end
