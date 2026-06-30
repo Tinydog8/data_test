@@ -27,7 +27,9 @@
 include(joinpath(@__DIR__, "langmuir_resolvent_cpu.jl"))
 
 using CUDA
-using CUDA.CUBLAS: getrf_batched!, getrs_batched!, gemm_strided_batched!
+# strided 批处理: 直接作用于连续 3D 数组, 用 unsafe_strided_batch 从 stride 计算设备指针
+# (比传 Vector{view} 更稳, 避免老版本 unsafe_batch 对 SubArray 指针处理导致的段错误)。
+using CUDA.CUBLAS: getrf_strided_batched!, getrs_strided_batched!, gemm_strided_batched!
 
 # ---------------------------------------------------------------------------
 # 由 CPU 端 cache 构造线性束 (A, E) 以及 B, C (CPU 端, 复数双精度)。
@@ -82,24 +84,24 @@ function gmax_cuda_pencil(
 )
     ntot = size(A, 1); n3 = size(B, 2); ncs = length(cs)
     dA = CuArray(A); dE = CuArray(E); dB = CuArray(B); dC = CuArray(C)
+    iω = CuArray(ComplexF64[im * (c * kx) for c in cs])         # (ncs,)
 
-    # 1) 批量装配: 用 *独立拥有内存* 的 CuMatrix 向量 (不用 view 切片, 兼容老版本
-    #    CUDA.jl 的 unsafe_batch 设备指针处理, 避免段错误)。
-    Ms = [dA .+ ComplexF64(im * (c * kx)) .* dE for c in cs]   # ncs 个 ntot×ntot
+    # 1) 批量装配连续 3D: Mb[:,:,j] = A + iω_j E
+    Mb = dA .+ reshape(iω, 1, 1, ncs) .* dE                     # (ntot,ntot,ncs) DenseCuArray
 
-    # 2) 批量 LU: 自分配 pivot 数组并传入 (不依赖返回值顺序)。
+    # 2) strided 批量 LU (显式 pivot, 不依赖返回值顺序; 原地分解 Mb)
     pivots = CuArray{Cint}(undef, ntot, ncs)
-    getrf_batched!(Ms, pivots)
+    getrf_strided_batched!(Mb, pivots)
 
-    # 3) 批量求解 Xs[j] = M_j^{-1} B  (每个 batch 独立的 B 副本)。
-    #    getrs_batched! 签名: (trans, A, B, pivots)。
-    Xs = [copy(dB) for _ in 1:ncs]
-    getrs_batched!('N', Ms, Xs, pivots)
+    # 3) strided 批量求解 Xb = M^{-1} B  (每个切片初始化为同一 B)
+    Xb = CuArray{ComplexF64}(undef, ntot, n3, ncs)
+    Xb .= reshape(dB, ntot, n3, 1)                              # 广播 B 到每个 batch
+    getrs_strided_batched!('N', Mb, Xb, pivots)                 # Xb <- M^{-1} B
 
-    # 4) T_j = C * Xs[j]  (写入连续 3D 缓冲, 供批量幂迭代)。
+    # 4) T_j = C * Xb[:,:,j]  (写入连续 3D 缓冲, 供批量幂迭代)
     Tb = CuArray{ComplexF64}(undef, n3, n3, ncs)
     @inbounds for j in 1:ncs
-        @views mul!(Tb[:, :, j], dC, Xs[j])
+        @views mul!(Tb[:, :, j], dC, Xb[:, :, j])
     end
 
     # 5) 批量加权幂迭代
@@ -114,20 +116,24 @@ end
 # ---------------------------------------------------------------------------
 function cuda_microtest(; n::Int = 5, ncs::Int = 3, nrhs::Int = 4)
     CUDA.functional() || error("CUDA 不可用。")
-    println("cuda_microtest: n=$n, batch=$ncs, nrhs=$nrhs")
+    println("cuda_microtest: n=$n, batch=$ncs, nrhs=$nrhs (strided batched LU/solve)")
     Ahost = [Matrix{ComplexF64}(I, n, n) .+ 0.1 .* randn(ComplexF64, n, n) for _ in 1:ncs]
     Bhost = [randn(ComplexF64, n, nrhs) for _ in 1:ncs]
     Xref = [Ahost[j] \ Bhost[j] for j in 1:ncs]
 
-    Ms = [CuArray(copy(Ahost[j])) for j in 1:ncs]
-    Xs = [CuArray(copy(Bhost[j])) for j in 1:ncs]
+    Mb = CuArray{ComplexF64}(undef, n, n, ncs)
+    Xb = CuArray{ComplexF64}(undef, n, nrhs, ncs)
+    for j in 1:ncs
+        @views Mb[:, :, j] .= CuArray(Ahost[j])
+        @views Xb[:, :, j] .= CuArray(Bhost[j])
+    end
     pivots = CuArray{Cint}(undef, n, ncs)
-    getrf_batched!(Ms, pivots)
+    getrf_strided_batched!(Mb, pivots)
     CUDA.synchronize()
-    getrs_batched!('N', Ms, Xs, pivots)
+    getrs_strided_batched!('N', Mb, Xb, pivots)
     CUDA.synchronize()
 
-    err = maximum(j -> norm(Array(Xs[j]) - Xref[j]) / norm(Xref[j]), 1:ncs)
+    err = maximum(j -> norm(Array(Xb[:, :, j]) - Xref[j]) / norm(Xref[j]), 1:ncs)
     @printf("  batched solve max rel err vs CPU = %.3e  -> %s\n", err, err < 1e-8 ? "OK" : "FAIL")
     return err < 1e-8
 end
