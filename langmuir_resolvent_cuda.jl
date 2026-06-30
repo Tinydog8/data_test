@@ -50,7 +50,7 @@ end
 # ---------------------------------------------------------------------------
 function _batched_sigma1_gpu(
     Tb::CuArray{ComplexF64,3}, wi3::CuVector{Float64}, ws3::CuVector{Float64},
-    w3::CuVector{Float64}; maxiter::Int = 200,
+    w3::CuVector{Float64}; maxiter::Int = 100, tol::Real = 1e-7, check_every::Int = 8,
 )
     n3 = size(Tb, 1)
     ncs = size(Tb, 3)
@@ -60,11 +60,20 @@ function _batched_sigma1_gpu(
     Xv ./= sqrt.(sum(abs2, Xv; dims = 1))         # 逐列归一
     Z = similar(Xv); U = similar(Xv); WU = similar(Xv)
     σ = CUDA.zeros(Float64, 1, ncs)
-    for _ in 1:maxiter
+    σprev = fill(-1.0, ncs)
+    for it in 1:maxiter
         @. Z = wi3 * Xv
         gemm_strided_batched!('N', 'N', ComplexF64(1), Tb,
             reshape(Z, n3, 1, ncs), ComplexF64(0), reshape(U, n3, 1, ncs))
         σ .= sqrt.(sum(abs2, ws3 .* U; dims = 1))
+        # 收敛判据 (所有列都稳定才停; 每 check_every 次同步一次以省开销)
+        if it % check_every == 0
+            σh = vec(Array(σ))
+            if maximum(abs.(σh .- σprev) ./ max.(σh, 1e-30)) ≤ tol
+                return σh
+            end
+            σprev = σh
+        end
         @. WU = w3 * U
         gemm_strided_batched!('C', 'N', ComplexF64(1), Tb,
             reshape(WU, n3, 1, ncs), ComplexF64(0), reshape(Xv, n3, 1, ncs))
@@ -244,15 +253,34 @@ end
 # 计时对比: 一小块网格上 CPU vs GPU 扫描。
 # ---------------------------------------------------------------------------
 function bench_cuda(g::RectGrid, prof; nlx::Int = 8, nlz::Int = 8,
-    ncs::Int = 20, H::Real = 1.0)
+    ncs::Int = 50, H::Real = 1.0)
     cs = phase_speed_grid(prof.UL_max, ncs)
     lx = logrange10(0.3, 30.0, nlx); lz = logrange10(0.1, 20.0, nlz)
+    npairs = nlx * nlz
     # warmup
     G_max_cuda(2π / 5, 2π / 0.8, g, prof, cs); G_max(2π / 5, 2π / 0.8, g, prof, cs)
+
+    # 诊断: 仅 CPU 端束构造 (并行) 的耗时, 衡量 GPU 版的"地板"
+    blas_saved = BLAS.get_num_threads(); BLAS.set_num_threads(1)
+    t_build = @elapsed begin
+        @threads for ix in 1:nlx
+            for iz in 1:nlz
+                kx = 2π / (lx[ix] * H); kz = 2π / (lz[iz] * H)
+                cache = build_resolvent_cache(kx, kz, g, prof)
+                _build_pencil(cache)
+            end
+        end
+    end
+    BLAS.set_num_threads(blas_saved)
+
     t_gpu = @elapsed Gg = scan_Gmax_map_cuda(g, prof, lx, lz, cs; H = H)
     t_cpu = @elapsed Gc = scan_Gmax_map(g, prof, lx, lz, cs; H = H, blas_threads = 1)
     rel = maximum(abs.(Gg .- Gc) ./ max.(abs.(Gc), 1e-30))
-    @printf("bench_cuda %dx%d x %d cs: GPU=%.1fs  CPU=%.1fs  speedup x%.1f  (max rel %.2e)\n",
-        nlx, nlz, ncs, t_gpu, t_cpu, t_cpu / t_gpu, rel)
-    return (; t_gpu, t_cpu, rel)
+    @printf("\nbench_cuda %dx%d=%d pairs x %d cs  (N=%d, %d threads):\n",
+        nlx, nlz, npairs, ncs, g.N, Threads.nthreads())
+    @printf("  CPU 束构造(并行, GPU 版地板) : %.1f s\n", t_build)
+    @printf("  GPU 全程                     : %.1f s\n", t_gpu)
+    @printf("  CPU 全程                     : %.1f s\n", t_cpu)
+    @printf("  speedup x%.2f   (max rel %.2e)\n", t_cpu / t_gpu, rel)
+    return (; t_build, t_gpu, t_cpu, rel)
 end
