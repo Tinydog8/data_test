@@ -27,9 +27,10 @@
 include(joinpath(@__DIR__, "langmuir_resolvent_cpu.jl"))
 
 using CUDA
-# strided 批处理: 直接作用于连续 3D 数组, 用 unsafe_strided_batch 从 stride 计算设备指针
-# (比传 Vector{view} 更稳, 避免老版本 unsafe_batch 对 SubArray 指针处理导致的段错误)。
-using CUDA.CUBLAS: getrf_strided_batched!, getrs_strided_batched!, gemm_strided_batched!
+# 注意: 某些 CUDA/libcublas 版本的 cublasZgetrsBatched (批处理求解) 在 ComplexF64 + 大
+# 尺寸下会段错误。这里**不使用** getrs_batched/getrs_strided_batched, 改用 CUSOLVER 单系统
+# 求解 (CuMatrix 的 \), 仅幂迭代用久经考验的 gemm_strided_batched!。
+using CUDA.CUBLAS: gemm_strided_batched!
 
 # ---------------------------------------------------------------------------
 # 由 CPU 端 cache 构造线性束 (A, E) 以及 B, C (CPU 端, 复数双精度)。
@@ -84,27 +85,17 @@ function gmax_cuda_pencil(
 )
     ntot = size(A, 1); n3 = size(B, 2); ncs = length(cs)
     dA = CuArray(A); dE = CuArray(E); dB = CuArray(B); dC = CuArray(C)
-    iω = CuArray(ComplexF64[im * (c * kx) for c in cs])         # (ncs,)
 
-    # 1) 批量装配连续 3D: Mb[:,:,j] = A + iω_j E
-    Mb = dA .+ reshape(iω, 1, 1, ncs) .* dE                     # (ntot,ntot,ncs) DenseCuArray
-
-    # 2) strided 批量 LU (显式 pivot, 不依赖返回值顺序; 原地分解 Mb)
-    pivots = CuArray{Cint}(undef, ntot, ncs)
-    getrf_strided_batched!(Mb, pivots)
-
-    # 3) strided 批量求解 Xb = M^{-1} B  (每个切片初始化为同一 B)
-    Xb = CuArray{ComplexF64}(undef, ntot, n3, ncs)
-    Xb .= reshape(dB, ntot, n3, 1)                              # 广播 B 到每个 batch
-    getrs_strided_batched!('N', Mb, Xb, pivots)                 # Xb <- M^{-1} B
-
-    # 4) T_j = C * Xb[:,:,j]  (写入连续 3D 缓冲, 供批量幂迭代)
+    # 1)-3) 逐 omega 单系统求解 (CUSOLVER, 经 CuMatrix 的 \), 形成 T_j 存入连续 3D 缓冲。
+    #       绕开有问题的 cublasZgetrsBatched。GPU FP64 极快, ncs 个串行求解仍很便宜。
     Tb = CuArray{ComplexF64}(undef, n3, n3, ncs)
     @inbounds for j in 1:ncs
-        @views mul!(Tb[:, :, j], dC, Xb[:, :, j])
+        Mj = dA .+ ComplexF64(im * (cs[j] * kx)) .* dE          # ntot×ntot
+        Xj = Mj \ dB                                            # CUSOLVER 单系统 LU 解, ntot×n3
+        @views mul!(Tb[:, :, j], dC, Xj)                        # T_j = C X_j
     end
 
-    # 5) 批量加权幂迭代
+    # 4) 批量加权幂迭代 (gemm_strided_batched, 与 getrsBatched 无关)
     σ = _batched_sigma1_gpu(Tb, dwi3, dws3, dw3; maxiter = maxiter)
     return maximum(abs2, σ)
 end
@@ -114,28 +105,32 @@ end
 # 在本机 CUDA.jl 版本上能正常工作。先跑这个; 若它都 segfault/报错, 说明是批处理原语
 # 的版本兼容问题, 请把输出贴回。
 # ---------------------------------------------------------------------------
-function cuda_microtest(; n::Int = 5, ncs::Int = 3, nrhs::Int = 4)
+function cuda_microtest(; n::Int = 256, ncs::Int = 4, nrhs::Int = 200)
     CUDA.functional() || error("CUDA 不可用。")
-    println("cuda_microtest: n=$n, batch=$ncs, nrhs=$nrhs (strided batched LU/solve)")
-    Ahost = [Matrix{ComplexF64}(I, n, n) .+ 0.1 .* randn(ComplexF64, n, n) for _ in 1:ncs]
-    Bhost = [randn(ComplexF64, n, nrhs) for _ in 1:ncs]
-    Xref = [Ahost[j] \ Bhost[j] for j in 1:ncs]
+    println("cuda_microtest: n=$n, batch=$ncs, nrhs=$nrhs")
 
-    Mb = CuArray{ComplexF64}(undef, n, n, ncs)
-    Xb = CuArray{ComplexF64}(undef, n, nrhs, ncs)
-    for j in 1:ncs
-        @views Mb[:, :, j] .= CuArray(Ahost[j])
-        @views Xb[:, :, j] .= CuArray(Bhost[j])
-    end
-    pivots = CuArray{Cint}(undef, n, ncs)
-    getrf_strided_batched!(Mb, pivots)
+    # 原语 1: 单系统 CUSOLVER 求解 (\) —— gmax_cuda_pencil 实际使用的求解
+    A1 = Matrix{ComplexF64}(I, n, n) .+ 0.1 .* randn(ComplexF64, n, n)
+    B1 = randn(ComplexF64, n, nrhs)
+    Xref = A1 \ B1
+    Xg = CuArray(A1) \ CuArray(B1)
     CUDA.synchronize()
-    getrs_strided_batched!('N', Mb, Xb, pivots)
-    CUDA.synchronize()
+    err1 = norm(Array(Xg) - Xref) / norm(Xref)
+    @printf("  [1] single-system CuMatrix \\ : rel err = %.3e  -> %s\n", err1, err1 < 1e-8 ? "OK" : "FAIL")
 
-    err = maximum(j -> norm(Array(Xb[:, :, j]) - Xref[j]) / norm(Xref[j]), 1:ncs)
-    @printf("  batched solve max rel err vs CPU = %.3e  -> %s\n", err, err < 1e-8 ? "OK" : "FAIL")
-    return err < 1e-8
+    # 原语 2: 批量 gemm (gemm_strided_batched!) —— 幂迭代实际使用
+    m = 64
+    P = randn(ComplexF64, m, m, ncs); Q = randn(ComplexF64, m, 1, ncs)
+    dP = CuArray(P); dQ = CuArray(Q); dR = CuArray{ComplexF64}(undef, m, 1, ncs)
+    gemm_strided_batched!('N', 'N', ComplexF64(1), dP, dQ, ComplexF64(0), dR)
+    CUDA.synchronize()
+    Rh = Array(dR)
+    err2 = maximum(j -> norm(Rh[:, :, j] - P[:, :, j] * Q[:, :, j]) / norm(P[:, :, j] * Q[:, :, j]), 1:ncs)
+    @printf("  [2] gemm_strided_batched!    : rel err = %.3e  -> %s\n", err2, err2 < 1e-8 ? "OK" : "FAIL")
+
+    ok = err1 < 1e-8 && err2 < 1e-8
+    println("  microtest ", ok ? "PASS" : "FAIL")
+    return ok
 end
 
 # 设备端权重向量 (与 _weight_vectors_3N 一致)。
