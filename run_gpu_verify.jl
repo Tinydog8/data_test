@@ -33,6 +33,10 @@ function main()
     prof = build_langmuir_profiles(g; La_t = 0.2, nuT_profile = :les)
     @printf("\nUL_max = %.4f\n", prof.UL_max)
 
+    # 0) 微型自检: 先确认 batched LU 求解原语能用 (隔离版本兼容问题)
+    println("\n================  cuda_microtest (batched LU primitive)  ================")
+    cuda_microtest()
+
     # 1) 数值正确性: GPU vs CPU
     println("\n================  verify_cuda (GPU vs CPU)  ================")
     cs_v = phase_speed_grid(prof.UL_max, 20)

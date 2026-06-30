@@ -82,33 +82,54 @@ function gmax_cuda_pencil(
 )
     ntot = size(A, 1); n3 = size(B, 2); ncs = length(cs)
     dA = CuArray(A); dE = CuArray(E); dB = CuArray(B); dC = CuArray(C)
-    iω = CuArray(ComplexF64[im * (c * kx) for c in cs])      # (ncs,)
 
-    # 1) 批量装配 Mb[:,:,j] = A + iω_j E
-    Mb = dA .+ reshape(iω, 1, 1, ncs) .* dE                  # (ntot,ntot,ncs)
+    # 1) 批量装配: 用 *独立拥有内存* 的 CuMatrix 向量 (不用 view 切片, 兼容老版本
+    #    CUDA.jl 的 unsafe_batch 设备指针处理, 避免段错误)。
+    Ms = [dA .+ ComplexF64(im * (c * kx)) .* dE for c in cs]   # ncs 个 ntot×ntot
 
-    # 2) 批量 LU  (getrf_batched! 返回 (pivotArray, info, A))
-    Mviews = [view(Mb, :, :, j) for j in 1:ncs]
-    pivots = getrf_batched!(Mviews, true)[1]                 # pivotArray :: CuMatrix{Cint}
+    # 2) 批量 LU: 自分配 pivot 数组并传入 (不依赖返回值顺序)。
+    pivots = CuArray{Cint}(undef, ntot, ncs)
+    getrf_batched!(Ms, pivots)
 
-    # 3) 批量求解 Xb = M^{-1} B  (同一 B 复制到每个 batch)
-    #    注意 getrs_batched! 签名为 (trans, A, B, pivots), pivots 在最后。
-    Xb = CuArray{ComplexF64}(undef, ntot, n3, ncs)
-    @inbounds for j in 1:ncs
-        @views Xb[:, :, j] .= dB
-    end
-    Xviews = [view(Xb, :, :, j) for j in 1:ncs]
-    getrs_batched!('N', Mviews, Xviews, pivots)
+    # 3) 批量求解 Xs[j] = M_j^{-1} B  (每个 batch 独立的 B 副本)。
+    #    getrs_batched! 签名: (trans, A, B, pivots)。
+    Xs = [copy(dB) for _ in 1:ncs]
+    getrs_batched!('N', Ms, Xs, pivots)
 
-    # 4) T_j = C * Xb[:,:,j]  (写入连续 3D 缓冲)
+    # 4) T_j = C * Xs[j]  (写入连续 3D 缓冲, 供批量幂迭代)。
     Tb = CuArray{ComplexF64}(undef, n3, n3, ncs)
     @inbounds for j in 1:ncs
-        @views mul!(Tb[:, :, j], dC, Xb[:, :, j])
+        @views mul!(Tb[:, :, j], dC, Xs[j])
     end
 
     # 5) 批量加权幂迭代
     σ = _batched_sigma1_gpu(Tb, dwi3, dws3, dw3; maxiter = maxiter)
     return maximum(abs2, σ)
+end
+
+# ---------------------------------------------------------------------------
+# 微型自检: 在小随机系统上验证 batched LU 求解原语 (getrf_batched!/getrs_batched!)
+# 在本机 CUDA.jl 版本上能正常工作。先跑这个; 若它都 segfault/报错, 说明是批处理原语
+# 的版本兼容问题, 请把输出贴回。
+# ---------------------------------------------------------------------------
+function cuda_microtest(; n::Int = 5, ncs::Int = 3, nrhs::Int = 4)
+    CUDA.functional() || error("CUDA 不可用。")
+    println("cuda_microtest: n=$n, batch=$ncs, nrhs=$nrhs")
+    Ahost = [Matrix{ComplexF64}(I, n, n) .+ 0.1 .* randn(ComplexF64, n, n) for _ in 1:ncs]
+    Bhost = [randn(ComplexF64, n, nrhs) for _ in 1:ncs]
+    Xref = [Ahost[j] \ Bhost[j] for j in 1:ncs]
+
+    Ms = [CuArray(copy(Ahost[j])) for j in 1:ncs]
+    Xs = [CuArray(copy(Bhost[j])) for j in 1:ncs]
+    pivots = CuArray{Cint}(undef, n, ncs)
+    getrf_batched!(Ms, pivots)
+    CUDA.synchronize()
+    getrs_batched!('N', Ms, Xs, pivots)
+    CUDA.synchronize()
+
+    err = maximum(j -> norm(Array(Xs[j]) - Xref[j]) / norm(Xref[j]), 1:ncs)
+    @printf("  batched solve max rel err vs CPU = %.3e  -> %s\n", err, err < 1e-8 ? "OK" : "FAIL")
+    return err < 1e-8
 end
 
 # 设备端权重向量 (与 _weight_vectors_3N 一致)。
