@@ -8,5 +8,6 @@
 cd Ocean1DRANS
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. examples/xuan_shen_steady.jl
+julia --project=. examples/validate_physics.jl
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
