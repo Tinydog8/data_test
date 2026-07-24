@@ -62,8 +62,21 @@ cd Ocean1DRANS
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. examples/xuan_shen_steady.jl
 julia --project=. examples/mcwilliams1997_steady.jl
+julia --project=. examples/validate_physics.jl   # 物理准确性验证（含 LES 对照）
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
+
+### 物理验证内容（`validate_physics.jl`）
+
+| 检查 | 含义 |
+|------|------|
+| 应力平衡 | 底应力 0、表应力 `u★²`、离散 `νe ∂U/∂z` 重建 |
+| Stokes / `La_t` | 指数廓线与 `La_t=√(u★/Us0)` |
+| 剪切结构 | 风生通道 `∂U/∂z≥0` |
+| TKE 平衡 | `P + E₆ P_S ≈ ε`（k–ℓ 局部平衡） |
+| Langmuir 趋势 | `E₆`、更小 `La_t`、KPPLT 开关均增强 `νₜ` |
+| KPPLT 峰 | `G(σ)` 峰值位于 `σ≈1/3` |
+| LES 形态 | 对照 `data/les_eddy_viscosity_fig2b.csv`（Xuan & Shen Fig.2b）的近壁衰减与内部单峰 |
 
 ## 与本仓库其它工作的衔接
 

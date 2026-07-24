@@ -80,4 +80,13 @@ using Ocean1DRANS
         @test length(lines) == 25
         rm(path)
     end
+
+    @testset "physics validation (core)" begin
+        # 不含 LES 文件的核心物理检查（完整 LES 对照见 examples/validate_physics.jl）
+        passed, results = run_physics_validation(; les_csv = "", verbose = false, Nz = 48)
+        @test passed
+        @test any(r -> occursin("stress balance", r.name) && r.passed, results)
+        @test any(r -> occursin("Stokes", r.name) && r.passed, results)
+        @test any(r -> occursin("Langmuir enhances", r.name) && r.passed, results)
+    end
 end

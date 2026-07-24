@@ -24,6 +24,7 @@ include("closures/kpp_lt.jl")
 include("momentum.jl")
 include("solver.jl")
 include("io.jl")
+include("validation.jl")
 
 export
     # grid
@@ -42,6 +43,8 @@ export
     integrate!, run_to_steady,
     diagnostic_stress_balance,
     # io
-    write_profiles_csv, profile_dict
+    write_profiles_csv, profile_dict,
+    # validation
+    CheckResult, run_physics_validation
 
 end # module

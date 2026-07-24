@@ -236,11 +236,36 @@ function run_to_steady(cfg::ModelConfig{T};
             end
 
             if residual < tol
-                update_viscosity!(state, cfg)
-                reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
-                                                  cfg.forcing.Fx, cfg.grid, cfg.forcing.ν)
-                reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
-                                                  cfg.forcing.Fy, cfg.grid, cfg.forcing.ν)
+                # 最终一致性：νt → U → k → νt
+                if cfg.closure isa KLStokesClosure
+                    for _ in 1:5
+                        update_viscosity!(state, cfg)
+                        reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
+                                                          cfg.forcing.Fx, cfg.grid, cfg.forcing.ν)
+                        reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
+                                                          cfg.forcing.Fy, cfg.grid, cfg.forcing.ν)
+                        @inbounds for i in 1:cfg.grid.Nz
+                            state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
+                        end
+                        k_prev = copy(state.k)
+                        equilibrate_tke!(state.k, state.U, state.V, cfg.stokes, state.νt_c,
+                                         state.ℓ, cfg.closure, cfg.grid)
+                        if maximum(abs, state.k .- k_prev) / max(maximum(state.k), eps(T)) < tol
+                            break
+                        end
+                    end
+                    update_viscosity!(state, cfg)
+                    reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
+                                                      cfg.forcing.Fx, cfg.grid, cfg.forcing.ν)
+                    reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
+                                                      cfg.forcing.Fy, cfg.grid, cfg.forcing.ν)
+                else
+                    update_viscosity!(state, cfg)
+                    reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
+                                                      cfg.forcing.Fx, cfg.grid, cfg.forcing.ν)
+                    reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
+                                                      cfg.forcing.Fy, cfg.grid, cfg.forcing.ν)
+                end
                 converged = true
                 break
             end
