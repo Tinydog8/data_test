@@ -1,0 +1,4 @@
+output/
+*.csv
+!examples/**
+.DS_Store
