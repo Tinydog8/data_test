@@ -43,7 +43,12 @@ UL = sol.state.U .+ sol.config.stokes.us_c
 
 ```bash
 julia --project=. examples/compare_my25_kc04.jl
-# 叠画结果：output/my25_vs_kc04_fig1.csv
+# 主图：output/my25_channel_E6_compare.csv   (nu_t_E6_4 vs nu_t_E6_0)
+# 叠画：output/my25_vs_kc04_fig1.csv         (列名 KM_MY25_channel_E6_*)
+# 摘要：output/E6_gate_summary.txt
 ```
 
-硬指标：通道算例上 `E6=4` 相对 `E6=0` 必须明显抬高 `KM`（脚本要求 ratio > 1.5）。
+硬指标：通道应力平衡上 `E6=4` 相对 `E6=0` 必须明显抬高 `KM`（ratio > 1.5；典型 ≈2.2）。
+
+若叠画里看起来 E6=4≈E6=0：多半画的是**旧列** `KM_MY25_E6_*`（来自未充分 spin-up 的 McWilliams+Coriolis，Ps≈0）。
+请改用 `my25_channel_E6_compare.csv` 或新列名 `KM_MY25_channel_E6_*`。
