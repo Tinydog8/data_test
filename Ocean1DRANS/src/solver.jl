@@ -3,8 +3,8 @@ mutable struct ColumnState{T}
     V::Vector{T}
     k::Vector{T}
     ℓ::Vector{T}
-    νt_f::Vector{T}   # faces, length Nz+1
-    νt_c::Vector{T}   # centers
+    νt_f::Vector{T}
+    νt_c::Vector{T}
     t::T
 end
 
@@ -39,14 +39,21 @@ function init_state(cfg::ModelConfig{T}) where {T}
     else
         k = _eval_initial(cfg.initial.k, g.zc)
     end
-    ℓ = mixing_length(g;
-                      κ = cfg.closure isa KLStokesClosure ? cfg.closure.κ :
-                          cfg.closure isa KPPLTClosure ? cfg.closure.κ : 0.4,
-                      ℓ_max = cfg.closure isa KLStokesClosure ? cfg.closure.ℓ_max : Inf,
-                      channel = cfg.closure isa KLStokesClosure ? cfg.closure.channel : false)
+    κ = cfg.closure isa KLStokesClosure ? cfg.closure.κ :
+        cfg.closure isa KPPLTClosure ? cfg.closure.κ : 0.4
+    ℓ_max = cfg.closure isa KLStokesClosure ? cfg.closure.ℓ_max : Inf
+    channel = cfg.closure isa KLStokesClosure ? cfg.closure.channel : false
+    ℓ = mixing_length(g; κ = κ, ℓ_max = ℓ_max, channel = channel)
     νt_f = zeros(T, g.Nz + 1)
     νt_c = zeros(T, g.Nz)
     return ColumnState{T}(U, V, k, ℓ, νt_f, νt_c, zero(T))
+end
+
+function closure_αs(clos)
+    if hasproperty(clos, :αs)
+        return clos.αs
+    end
+    return 0.0
 end
 
 function update_viscosity!(state::ColumnState, cfg::ModelConfig)
@@ -57,6 +64,8 @@ function update_viscosity!(state::ColumnState, cfg::ModelConfig)
         eddy_viscosity_faces!(state.νt_f, state.k, state.ℓ, clos, cfg.grid)
     elseif clos isa KPPLTClosure
         eddy_viscosity_kpp!(state.νt_f, clos, cfg.grid, cfg.forcing, cfg.La_t)
+    elseif clos isa LESNutClosure
+        eddy_viscosity_les!(state.νt_f, clos, cfg.grid, cfg.forcing)
     else
         error("unsupported closure $(typeof(clos))")
     end
@@ -67,32 +76,45 @@ function update_viscosity!(state::ColumnState, cfg::ModelConfig)
 end
 
 """
-无 Coriolis 时由应力平衡重建速度：
-`(ν+νt) ∂φ/∂z = τ_top - F * z`（界面），再从底到表积分。
-底部 stress-free 要求 `τ_top + F*H = 0`。
-速度零点取底部第一层 `φ[1]=0`（规范条件）。
+由应力平衡重建欧拉速度。
+
+Lagrangian / Harcourt 动量通量：
+```
+τ = (ν+νt)(∂U/∂z + αs ∂Us/∂z)  ⇒  ∂U/∂z = τ/(ν+νt) - αs ∂Us/∂z
+```
 """
 function reconstruct_velocity_from_stress!(φ::AbstractVector, νt_f::AbstractVector,
                                            τ_top::Real, Fbody::Real,
-                                           grid::UniformColumnGrid, ν::Real)
+                                           grid::UniformColumnGrid, ν::Real;
+                                           αs::Real = 0.0,
+                                           dUsdz_f = nothing)
     Nz = grid.Nz
     dz = grid.dz
     φ[1] = zero(eltype(φ))
-    # face shear stress and integrate cell-to-cell
-    # Uz at face i+1/2 between cells i and i+1:
     @inbounds for i in 1:Nz-1
-        z_face = grid.zf[i + 1]          # interface between cell i and i+1
+        z_face = grid.zf[i + 1]
         νe = ν + νt_f[i + 1]
         τ = τ_top - Fbody * z_face
-        dφ = τ / max(νe, eps(typeof(νe))) * dz
-        φ[i + 1] = φ[i] + dφ
+        shear = τ / max(νe, eps(typeof(νe)))
+        if αs != 0 && dUsdz_f !== nothing
+            shear -= αs * dUsdz_f[i + 1]
+        end
+        φ[i + 1] = φ[i] + shear * dz
     end
     return φ
 end
 
-"""
-局部平衡 TKE：`P + E6 P_S = ε = cε k^{3/2}/ℓ`，忽略输运。
-"""
+function _reconstruct_uv!(state::ColumnState, cfg::ModelConfig)
+    αs = closure_αs(cfg.closure)
+    reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
+                                      cfg.forcing.Fx, cfg.grid, cfg.forcing.ν;
+                                      αs = αs, dUsdz_f = cfg.stokes.dusdz_f)
+    reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
+                                      cfg.forcing.Fy, cfg.grid, cfg.forcing.ν;
+                                      αs = αs, dUsdz_f = cfg.stokes.dvsdz_f)
+    return state
+end
+
 function equilibrate_tke!(k::AbstractVector, U::AbstractVector, V::AbstractVector,
                           stokes::StokesDrift, νt_c::AbstractVector, ℓ::AbstractVector,
                           clos::KLStokesClosure, grid::UniformColumnGrid)
@@ -100,6 +122,7 @@ function equilibrate_tke!(k::AbstractVector, U::AbstractVector, V::AbstractVecto
     dz = grid.dz
     cε = clos.cε
     E6 = clos.E6
+    αs = clos.αs
     k_min = clos.k_min
     @inbounds for i in 1:Nz
         if i == 1
@@ -112,9 +135,9 @@ function equilibrate_tke!(k::AbstractVector, U::AbstractVector, V::AbstractVecto
             Uz = (U[i + 1] - U[i - 1]) / (2dz)
             Vz = (V[i + 1] - V[i - 1]) / (2dz)
         end
-        P, PS = tke_production(Uz, Vz, stokes.dusdz_c[i], stokes.dvsdz_c[i], νt_c[i], E6)
+        P, PS = tke_production(Uz, Vz, stokes.dusdz_c[i], stokes.dvsdz_c[i],
+                               νt_c[i], E6, αs)
         Prod = max(P + PS, zero(P))
-        # ε = cε k^{3/2}/ℓ = Prod  ⇒  k = (Prod * ℓ / cε)^{2/3}
         k[i] = max((Prod * ℓ[i] / cε)^(2 / 3), k_min)
     end
     return k
@@ -152,9 +175,7 @@ function integrate!(state::ColumnState, cfg::ModelConfig;
     Δt = isnothing(dt) ? estimate_dt(state, cfg) : dt
     for n in 1:nsteps
         timestep!(state, cfg, Δt)
-        if callback !== nothing
-            callback(state, cfg, n)
-        end
+        callback !== nothing && callback(state, cfg, n)
     end
     return state
 end
@@ -162,14 +183,8 @@ end
 """
     run_to_steady(cfg; kwargs...) -> SteadySolution
 
-迭代求解稳态背景流与湍流粘性廓线。
-
-对无 Coriolis 情形（如 Xuan–Shen 通道）采用：
-1. 由闭合更新 `νt`
-2. 应力平衡重建 `(U,V)`
-3. 对 `KLStokesClosure` 用局部生产–耗散平衡更新 `k`
-
-对有 Coriolis 情形回退到隐式扩散时间推进。
+迭代求解稳态背景流与湍流粘性。无 Coriolis 时用 Lagrangian 应力平衡；
+有 Coriolis 时用时间推进。
 """
 function run_to_steady(cfg::ModelConfig{T};
                        tol::Real = 1e-6,
@@ -187,10 +202,11 @@ function run_to_steady(cfg::ModelConfig{T};
     converged = false
     n = 0
     use_stress_balance = abs(cfg.forcing.f) < eps(T)
+    αs = closure_αs(cfg.closure)
 
     if verbose
-        @printf("Ocean1DRANS steady run: Nz=%d, La_t=%.3f, method=%s, tol=%.1e\n",
-                cfg.grid.Nz, cfg.La_t,
+        @printf("Ocean1DRANS steady run: Nz=%d, La_t=%.3f, αs=%.2f, method=%s, tol=%.1e\n",
+                cfg.grid.Nz, cfg.La_t, αs,
                 use_stress_balance ? "stress-balance" : "time-march", tol)
     end
 
@@ -201,8 +217,7 @@ function run_to_steady(cfg::ModelConfig{T};
         while n < max_steps
             n += 1
             update_viscosity!(state, cfg)
-
-            if n > 1
+            if n > 1 && !(cfg.closure isa LESNutClosure)
                 @. state.νt_c = underrelax * state.νt_c + (1 - underrelax) * ν_old
                 state.νt_f[1] = zero(T)
                 state.νt_f[end] = zero(T)
@@ -211,10 +226,7 @@ function run_to_steady(cfg::ModelConfig{T};
                 end
             end
 
-            reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
-                                              cfg.forcing.Fx, cfg.grid, cfg.forcing.ν)
-            reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
-                                              cfg.forcing.Fy, cfg.grid, cfg.forcing.ν)
+            _reconstruct_uv!(state, cfg)
 
             if cfg.closure isa KLStokesClosure
                 @inbounds for i in 1:cfg.grid.Nz
@@ -227,23 +239,23 @@ function run_to_steady(cfg::ModelConfig{T};
 
             dU = maximum(abs, state.U .- U_old)
             dν = maximum(abs, state.νt_c .- ν_old)
-            scale = max(maximum(abs, state.U), cfg.forcing.u★, eps(T))
+            # 欧拉力在 Langmuir 极限下可接近 0，用 u★ 与 Us 定标
+            scale = max(maximum(abs, state.U), maximum(abs, cfg.stokes.us_c),
+                        cfg.forcing.u★, eps(T))
             residual = max(dU, dν) / scale
 
             if verbose && (n % 20 == 0 || residual < tol || n == 1)
-                @printf("  iter %5d  residual=%.3e  max|U|=%.4f  max(νt)=%.4e\n",
-                        n, residual, maximum(abs, state.U), maximum(state.νt_c))
+                UL = maximum(abs, state.U .+ cfg.stokes.us_c)
+                @printf("  iter %5d  residual=%.3e  max|U|=%.4f  max|UL|=%.4f  max(νt)=%.4e\n",
+                        n, residual, maximum(abs, state.U), UL, maximum(state.νt_c))
             end
 
-            if residual < tol
-                # 最终一致性：νt → U → k → νt
+            if residual < tol || cfg.closure isa LESNutClosure || cfg.closure isa KPPLTClosure
+                # 诊断闭合一步即可；KLStokes 再做几次一致性迭代
                 if cfg.closure isa KLStokesClosure
-                    for _ in 1:5
+                    for _ in 1:8
                         update_viscosity!(state, cfg)
-                        reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
-                                                          cfg.forcing.Fx, cfg.grid, cfg.forcing.ν)
-                        reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
-                                                          cfg.forcing.Fy, cfg.grid, cfg.forcing.ν)
+                        _reconstruct_uv!(state, cfg)
                         @inbounds for i in 1:cfg.grid.Nz
                             state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
                         end
@@ -254,19 +266,11 @@ function run_to_steady(cfg::ModelConfig{T};
                             break
                         end
                     end
-                    update_viscosity!(state, cfg)
-                    reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
-                                                      cfg.forcing.Fx, cfg.grid, cfg.forcing.ν)
-                    reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
-                                                      cfg.forcing.Fy, cfg.grid, cfg.forcing.ν)
-                else
-                    update_viscosity!(state, cfg)
-                    reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
-                                                      cfg.forcing.Fx, cfg.grid, cfg.forcing.ν)
-                    reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
-                                                      cfg.forcing.Fy, cfg.grid, cfg.forcing.ν)
                 end
+                update_viscosity!(state, cfg)
+                _reconstruct_uv!(state, cfg)
                 converged = true
+                residual = min(residual, tol)
                 break
             end
             U_old .= state.U
@@ -308,20 +312,26 @@ function run_to_steady(cfg::ModelConfig{T};
     if verbose
         @printf("Finished: converged=%s, iters=%d, residual=%.3e, wall=%.2fs\n",
                 converged, n, residual, wall)
+        @printf("  max|U|=%.4f  max|Us|=%.4f  max|UL|=%.4f  max(νt)=%.4e\n",
+                maximum(abs, state.U), maximum(abs, cfg.stokes.us_c),
+                maximum(abs, state.U .+ cfg.stokes.us_c), maximum(state.νt_c))
     end
     return SteadySolution(cfg, state, converged, n, T(residual), wall)
 end
 
 """
-由稳态应力平衡诊断界面剪切：`νe ∂U/∂z = τx - Fx*z`。
+诊断应力：`τ(z)=τx - Fx z`，以及 Lagrangian 剪切重建。
 """
 function diagnostic_stress_balance(sol::SteadySolution)
     cfg = sol.config
     g = cfg.grid
     νe = cfg.forcing.ν .+ sol.state.νt_f
+    αs = closure_αs(cfg.closure)
     τ_f = similar(g.zf)
+    Uz_f = similar(g.zf)
     @inbounds for i in eachindex(g.zf)
         τ_f[i] = cfg.forcing.τx - cfg.forcing.Fx * g.zf[i]
+        Uz_f[i] = τ_f[i] / max(νe[i], eps(eltype(νe))) - αs * cfg.stokes.dusdz_f[i]
     end
-    return (; νe, τ_f, Uz_f = τ_f ./ max.(νe, eps(eltype(νe))))
+    return (; νe, τ_f, Uz_f, αs)
 end

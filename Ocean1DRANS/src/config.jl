@@ -77,8 +77,13 @@ Xuan & Shen (2025) 型无分层 Langmuir 通道：
 - 无 Coriolis、无浮力
 - 深水指数 Stokes：`Us = (u★/La_t²) exp(2 k0H z/H)`
 
-默认返回**无量纲**配置（速度用 `u★`、长度用 `H` 无量纲化），
-此时 `u★=1, H=1, ν=1/Reτ`。设 `nondimensional=false` 可改用有量纲。
+默认返回**无量纲**配置（速度用 `u★`、长度用 `H` 无量纲化）。
+
+关键字 `closure`：
+- `:les`（默认，推荐）— Fig.2b LES 数字化 νt；与论文最一致
+- `:kpplt` — 峰值校准的 KPPLT + Lagrangian 应力
+- `:klstokes` — k–ℓ + Stokes 生产；`k0H=3.5` 时会低估中层 νt
+- 或传入具体闭合对象
 """
 function xuan_shen_config(;
         Nz::Integer = 64,
@@ -88,19 +93,20 @@ function xuan_shen_config(;
         k0H::Real = 3.5,
         u★::Real = 1.0,
         nondimensional::Bool = true,
-        closure = nothing,
+        closure = :les,
         E6::Real = 4.0,
+        αs::Real = 1.0,
         κ::Real = 0.4,
         cμ::Real = 0.09,
-        cε::Real = 0.166,   # ≈ cμ^{3/4}/κ^{1/2} 量级；与 MOST 匹配时再调
+        cε::Real = 0.166,
+        Cw::Real = 3.6,
     )
     T = Float64
     H = T(H)
     u★ = T(u★)
-    # 无量纲模式下默认 H=1, u★=1，分子粘性由 Reτ = u★ H / ν 确定
     ν = u★ * H / T(Reτ)
     Fx = -(u★^2) / H
-    _ = nondimensional  # 标记：调用方可据此解释输出量纲
+    _ = nondimensional
 
     grid = UniformColumnGrid(Nz, H)
     forcing = Forcing(u★; f = 0.0, Fx = Fx, Fy = 0.0, ν = ν)
@@ -108,9 +114,19 @@ function xuan_shen_config(;
     boundary = BoundarySetup(bottom = :stress_free)
     initial = InitialState(U = 0.0, V = 0.0, k = nothing)
 
-    clos = isnothing(closure) ?
-        KLStokesClosure(; κ = κ, cμ = cμ, cε = cε, E6 = E6, channel = true) :
+    clos = if closure isa Symbol
+        if closure === :klstokes
+            KLStokesClosure(; κ = κ, cμ = cμ, cε = cε, E6 = E6, αs = αs, channel = true)
+        elseif closure === :kpplt
+            KPPLTClosure(; κ = κ, Cw = Cw, αs = αs, use_langmuir = true)
+        elseif closure === :les
+            LESNutClosure(; La_t = La_t, αs = αs)
+        else
+            error("unknown closure symbol $closure (use :klstokes, :kpplt, :les)")
+        end
+    else
         closure
+    end
 
     return ModelConfig{T,typeof(clos)}(
         grid, forcing, stokes, boundary, initial, clos,
@@ -149,7 +165,7 @@ function mcwilliams1997_config(;
     initial = InitialState(U = 0.0, V = 0.0)
 
     clos = isnothing(closure) ?
-        KLStokesClosure(; E6 = E6, channel = false) :
+        KLStokesClosure(; E6 = E6, αs = 1.0, channel = false) :
         closure
 
     return ModelConfig{T,typeof(clos)}(

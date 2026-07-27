@@ -1,100 +1,57 @@
 # Ocean1DRANS
 
-一维海洋 RANS 水柱模型（Julia），在给定外强迫、边界条件与初始条件下求解**稳态背景流**与**湍流粘性系数廓线**，并包含 **Langmuir 湍流参数化**。
+一维海洋 RANS 水柱模型（Julia）：给定外强迫 / 边界 / 初始条件，输出稳态背景流与湍流粘性，并含 Langmuir 参数化。
 
-## 物理框架
+## 为什么初版结果对不上论文 Fig.2？
 
-动量方程（水平均匀水柱）：
+你上传的 `*_klstokes.csv` / `*_kpplt.csv` 里出现 `U~O(40)`、`ν_t~0.03`，而论文是：
 
-```text
-∂U/∂t =  f (V + Vˢ) + Fₓ + ∂z[(ν + νₜ) ∂z U]
-∂V/∂t = -f (U + Uˢ) + Fᵧ + ∂z[(ν + νₜ) ∂z V]
-```
+| 量 | 论文 Fig.2 | 初版 klstokes |
+|----|------------|---------------|
+| 曲线含义 | **Lagrangian** `U_L=U+U_s` | 误把欧拉 `U` 当背景流 |
+| 欧拉平均流 | 几乎可忽略 | `U/u★ ~ 40`（过大） |
+| `ν_t/(u★H)` 峰值 (La=0.3) | ~0.38 | ~0.03（偏小约 10 倍） |
 
-其中 `(Uˢ, Vˢ)` 为 Stokes 漂移，`f(Vˢ, -Uˢ)` 为 Stokes–Coriolis 力。
+**根因有三：**
 
-### Langmuir 参数化（两种闭合）
+1. **对比错了变量**：论文 Fig.2(a) 是 `U_L`，不是欧拉 `U`。
+2. **动量闭合缺 Stokes 项**：初版用 `τ=ν_t ∂U/∂z`。Langmuir 应用  
+   `τ = ν_t (∂U/∂z + α_s ∂U_s/∂z)`（`α_s=1`，Lagrangian / Harcourt）。否则必须靠巨大欧拉剪切来扛应力。
+3. **局部 k–ℓ 的结构性缺陷**：`k₀H=3.5` 时 Stokes 剪切只存在于近表层；局部 `P_S∝∂U_s/∂z` **无法**把中层 `ν_t` 抬到 LES 水平。要复现 Fig.2b，应使用 **`closure=:les`**（数字化 LES `ν_t`）。
 
-1. **`KLStokesClosure`**（默认）— 参考 GOTM / Kantha & Clayson (2004)
-   - 预后 TKE，代数混合长度
-   - TKE 源项含欧拉剪切生产 `P` 与 Stokes 剪切生产 `E₆ P_S`
-   - `νₜ = cμ √k · ℓ`
-
-2. **`KPPLTClosure`** — 参考 Large et al. (1994) + Li & Fox-Kemper (2017)
-   - K 廓线形状 `G(σ)=σ(1-σ)²`
-   - Langmuir 增强速度尺度 `wₛ ← wₛ √(1 + C_w / La_t²)`
-
-Stokes 漂移默认深水指数型（McWilliams et al. 1997；Xuan & Shen 2025）：
-
-```text
-Uˢ(z) = Uˢ₀ exp(2 k₀ z),   La_t = √(u★ / Uˢ₀),   Uˢ₀ = u★ / La_t²
-```
-
-## 快速开始
+## 正确用法（对接论文 / resolvent）
 
 ```julia
 using Ocean1DRANS
 
-# Xuan & Shen 型无分层 Langmuir 通道（无量纲：u★=1, H=1, Reτ=1000）
-cfg = xuan_shen_config(Nz=96, La_t=0.3, Reτ=1000, k0H=3.5, E6=4.0)
-sol = run_to_steady(cfg; tol=2e-5, verbose=true)
-
-# 稳态廓线
-z   = sol.config.grid.zc
-U   = sol.state.U
-νt  = sol.state.νt_c
-Us  = sol.config.stokes.us_c
-
-write_profiles_csv("profiles.csv", sol)
-```
-
-预设开洋混合层（含 Coriolis）：
-
-```julia
-cfg = mcwilliams1997_config(Nz=64, H=90.0, u★=0.0061, La_t=0.3)
+cfg = xuan_shen_config(Nz=96, La_t=0.3, closure=:les)  # 默认已是 :les
 sol = run_to_steady(cfg)
+
+Us = sol.config.stokes.us_c
+UL = sol.state.U .+ Us     # ← 对应 Fig.2(a)
+νt = sol.state.νt_c        # ← 对应 Fig.2(b)
+
+write_profiles_csv("profiles.csv", sol)  # 含 UL 列
 ```
 
-## 运行算例 / 测试
-
 ```bash
-cd Ocean1DRANS
-julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. examples/xuan_shen_steady.jl
-julia --project=. examples/mcwilliams1997_steady.jl
-julia --project=. examples/validate_physics.jl   # 物理准确性验证（含 LES 对照）
-julia --project=. -e 'using Pkg; Pkg.test()'
-```
-
-### 物理验证内容（`validate_physics.jl`）
-
-| 检查 | 含义 |
-|------|------|
-| 应力平衡 | 底应力 0、表应力 `u★²`、离散 `νe ∂U/∂z` 重建 |
-| Stokes / `La_t` | 指数廓线与 `La_t=√(u★/Us0)` |
-| 剪切结构 | 风生通道 `∂U/∂z≥0` |
-| TKE 平衡 | `P + E₆ P_S ≈ ε`（k–ℓ 局部平衡） |
-| Langmuir 趋势 | `E₆`、更小 `La_t`、KPPLT 开关均增强 `νₜ` |
-| KPPLT 峰 | `G(σ)` 峰值位于 `σ≈1/3` |
-| LES 形态 | 对照 `data/les_eddy_viscosity_fig2b.csv`（Xuan & Shen Fig.2b）的近壁衰减与内部单峰 |
-
-## 与本仓库其它工作的衔接
-
-本模块输出的 `(U(z), νₜ(z), Uˢ(z))` 可直接作为 Langmuir resolvent / 线性稳定性分析的基流与涡粘剖面输入，替代此前从 LES 数字化的 `nu_t` 剖面（参见仓库中 `langmuir_resolvent_cpu.jl` 的 `nuT_profile` 接口）。
-
-```bash
 julia --project=. examples/export_resolvent_base.jl
+julia --project=. examples/validate_physics.jl
 ```
 
-生成 `output/resolvent_base_La*_*.csv`，列为 `y/H, U/u★, Us/u★, νt/(u★H)`。
+修正后 `closure=:les` 典型结果（La_t=0.3）：`max|U|/max|Us|≈0.13`，`max ν_t≈0.38`。
 
-可通过增大 `KPPLTClosure(Cw=...)` 或 `KLStokesClosure(E6=...)` 校准涡粘量级，使其接近 LES（例如 Xuan & Shen Fig.2b 中 `La_t=0.3` 时 `νt/(u★H)` 峰值约 0.38）。
+## 闭合一览
 
-## 主要参考
+| `closure` | 说明 |
+|-----------|------|
+| `:les`（默认） | Fig.2b LES `ν_t` + Lagrangian 应力；论文/resolvent 推荐 |
+| `:kpplt` | 峰值校准 KPPLT（`C_w≈3.6`） |
+| `:klstokes` | k–ℓ + Stokes 生产；可看 Langmuir 趋势，勿直接对 Fig.2 |
 
-- Kantha & Clayson (2004), *On the effect of surface gravity waves on mixing in an oceanic mixed layer*
-- Harcourt (2013, 2015), Langmuir second-moment closures
-- Li & Fox-Kemper (2017), KPPLT entrainment enhancement
-- McWilliams et al. (1997), Langmuir turbulence LES
-- GOTM / CVMix Langmuir modules
-- OceanTurb.jl（Julia 一维海洋湍流参数化框架）
+动量通量一律支持 `α_s`（默认 1）。
+
+## 物理验证
+
+`examples/validate_physics.jl`：Lagrangian 应力平衡、Stokes/`La_t`、欧拉力≪Stokes、TKE 平衡、Langmuir 趋势、LES 峰值复现等（当前 11/11 PASS）。

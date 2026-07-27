@@ -15,12 +15,14 @@ module Ocean1DRANS
 using LinearAlgebra
 using Printf
 
+include("utils.jl")
 include("grid.jl")
 include("stokes.jl")
 include("config.jl")
 include("closures/mixing_length.jl")
 include("closures/kl_stokes.jl")
 include("closures/kpp_lt.jl")
+include("closures/les_nut.jl")
 include("momentum.jl")
 include("solver.jl")
 include("io.jl")
@@ -37,13 +39,14 @@ export
     Forcing, BoundarySetup, InitialState, ModelConfig,
     xuan_shen_config, mcwilliams1997_config,
     # closures
-    KLStokesClosure, KPPLTClosure,
+    KLStokesClosure, KPPLTClosure, LESNutClosure,
     # solve
     ColumnState, SteadySolution,
     integrate!, run_to_steady,
     diagnostic_stress_balance,
-    # io
+    # io / utils
     write_profiles_csv, profile_dict,
+    load_les_nut_csv,
     # validation
     CheckResult, run_physics_validation
 

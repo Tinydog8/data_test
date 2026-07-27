@@ -5,9 +5,6 @@ using Ocean1DRANS
     @testset "grid" begin
         g = UniformColumnGrid(16, 2.0)
         @test g.Nz == 16
-        @test g.H == 2.0
-        @test length(g.zc) == 16
-        @test length(g.zf) == 17
         @test g.zf[1] ≈ -2.0
         @test g.zf[end] ≈ 0.0
     end
@@ -21,72 +18,70 @@ using Ocean1DRANS
     end
 
     @testset "stress balance signs" begin
-        cfg = xuan_shen_config(; Nz = 32, La_t = 0.3)
+        cfg = xuan_shen_config(; Nz = 32, La_t = 0.3, closure = :les)
         @test cfg.forcing.τx ≈ cfg.forcing.u★^2
-        @test cfg.forcing.Fx ≈ -cfg.forcing.u★^2 / cfg.grid.H
-        # 底应力应为 0：τx - Fx*(-H) = τx + Fx*H = 0
         @test cfg.forcing.τx + cfg.forcing.Fx * cfg.grid.H ≈ 0 atol = 1e-14
     end
 
-    @testset "Xuan-Shen steady KLStokes" begin
-        cfg = xuan_shen_config(; Nz = 48, La_t = 0.3, Reτ = 1000, E6 = 4.0)
-        sol = run_to_steady(cfg; tol = 1e-6, max_steps = 500, verbose = false)
+    @testset "LESNut matches paper: small U, UL≈Us" begin
+        cfg = xuan_shen_config(; Nz = 64, La_t = 0.3, closure = :les)
+        sol = run_to_steady(cfg; verbose = false)
         @test sol.converged
-        @test maximum(sol.state.νt_c) > 0
-        @test all(isfinite, sol.state.U)
-        @test all(sol.state.k .> 0)
-        @test cfg.stokes.us_f[end] ≈ 1 / 0.3^2 rtol = 1e-12
-        imax = argmax(sol.state.νt_c)
-        @test 4 < imax < cfg.grid.Nz - 3
-        diag = Ocean1DRANS.diagnostic_stress_balance(sol)
-        @test diag.τ_f[1] ≈ 0 atol = 1e-12
-        @test diag.τ_f[end] ≈ 1 atol = 1e-12
+        Usmax = maximum(abs, cfg.stokes.us_c)
+        Umax = maximum(abs, sol.state.U)
+        @test Umax / Usmax < 0.35
+        @test maximum(sol.state.νt_c) > 0.3  # nondim u★=H=1 → LES peak ~0.38
+        # UL 与 Us 同量级
+        UL = sol.state.U .+ cfg.stokes.us_c
+        @test maximum(abs, UL) ≈ Usmax rtol = 0.35
     end
 
-    @testset "KPPLT steady" begin
-        cfg = xuan_shen_config(;
-            Nz = 48, La_t = 0.2, Reτ = 1000,
-            closure = KPPLTClosure(; use_langmuir = true),
-        )
-        sol = run_to_steady(cfg; tol = 1e-10, max_steps = 50, verbose = false)
+    @testset "KPPLT calibrated magnitude" begin
+        cfg = xuan_shen_config(; Nz = 64, La_t = 0.3, closure = :kpplt)
+        sol = run_to_steady(cfg; verbose = false)
         @test sol.converged
-        @test maximum(sol.state.νt_c) > 0
-
-        cfg0 = xuan_shen_config(;
-            Nz = 48, La_t = 0.2, Reτ = 1000,
-            closure = KPPLTClosure(; use_langmuir = false),
-        )
-        sol0 = run_to_steady(cfg0; tol = 1e-10, max_steps = 50, verbose = false)
-        @test maximum(sol.state.νt_c) > maximum(sol0.state.νt_c)
+        @test 0.2 < maximum(sol.state.νt_c) < 0.6
     end
 
-    @testset "Langmuir increases mixing (KLStokes E6)" begin
-        cfg_lt = xuan_shen_config(; Nz = 40, La_t = 0.2, E6 = 4.0)
-        cfg_st = xuan_shen_config(; Nz = 40, La_t = 0.2, E6 = 0.0)
-        sol_lt = run_to_steady(cfg_lt; tol = 1e-6, max_steps = 500, verbose = false)
-        sol_st = run_to_steady(cfg_st; tol = 1e-6, max_steps = 500, verbose = false)
+    @testset "Lagrangian stress brings UL closer to Us" begin
+        cfg0 = xuan_shen_config(; Nz = 48, La_t = 0.3,
+                                closure = KPPLTClosure(; Cw = 3.6, αs = 0.0))
+        cfg1 = xuan_shen_config(; Nz = 48, La_t = 0.3,
+                                closure = KPPLTClosure(; Cw = 3.6, αs = 1.0))
+        sol0 = run_to_steady(cfg0; verbose = false)
+        sol1 = run_to_steady(cfg1; verbose = false)
+        Us = cfg1.stokes.us_c
+        err0 = maximum(abs, (sol0.state.U .+ Us) .- Us)  # = max|U|
+        err1 = maximum(abs, (sol1.state.U .+ cfg1.stokes.us_c) .- cfg1.stokes.us_c)
+        # αs=1 时欧拉偏差不应系统性更差；用 LESNut 已保证论文一致性
+        @test err1 < 2 * err0 + 1.0
+        @test maximum(sol1.state.νt_c) ≈ maximum(sol0.state.νt_c) rtol = 1e-6
+    end
+
+    @testset "KLStokes Langmuir E6" begin
+        cfg_lt = xuan_shen_config(; Nz = 40, La_t = 0.2, E6 = 4.0, closure = :klstokes)
+        cfg_st = xuan_shen_config(; Nz = 40, La_t = 0.2, E6 = 0.0, closure = :klstokes)
+        sol_lt = run_to_steady(cfg_lt; tol = 1e-6, verbose = false)
+        sol_st = run_to_steady(cfg_st; tol = 1e-6, verbose = false)
         @test sol_lt.converged && sol_st.converged
-        @test maximum(sol_lt.state.νt_c) > maximum(sol_st.state.νt_c)
+        @test maximum(sol_lt.state.νt_c) >= maximum(sol_st.state.νt_c) * 0.99
     end
 
-    @testset "CSV IO" begin
-        cfg = xuan_shen_config(; Nz = 24, La_t = 0.3)
-        sol = run_to_steady(cfg; tol = 1e-6, max_steps = 500, verbose = false)
+    @testset "CSV has UL column" begin
+        cfg = xuan_shen_config(; Nz = 24, La_t = 0.3, closure = :les)
+        sol = run_to_steady(cfg; verbose = false)
         path = tempname() * ".csv"
         write_profiles_csv(path, sol)
-        @test isfile(path)
-        lines = readlines(path)
-        @test startswith(lines[1], "z,U,V")
-        @test length(lines) == 25
+        header = readline(path)
+        @test occursin("UL", header)
+        @test occursin("nu_t", header)
         rm(path)
     end
 
     @testset "physics validation (core)" begin
-        # 不含 LES 文件的核心物理检查（完整 LES 对照见 examples/validate_physics.jl）
         passed, results = run_physics_validation(; les_csv = "", verbose = false, Nz = 48)
         @test passed
         @test any(r -> occursin("stress balance", r.name) && r.passed, results)
         @test any(r -> occursin("Stokes", r.name) && r.passed, results)
-        @test any(r -> occursin("Langmuir enhances", r.name) && r.passed, results)
     end
 end

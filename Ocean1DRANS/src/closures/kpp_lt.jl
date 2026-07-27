@@ -3,32 +3,29 @@ K-profile 参数化 + Langmuir 增强（KPPLT）。
 
 参考：
 - Large et al. (1994) KPP
-- McWilliams & Sullivan (2000); Li & Fox-Kemper (2017) Langmuir 增强速度尺度
+- McWilliams & Sullivan (2000); Li & Fox-Kemper (2017)
 
-在无分层风生边界层中：
 ```
-νt(σ) = h · w_s · G(σ),   σ = -z/h ∈ [0,1]
-G(σ) = σ (1-σ)^2
-w_s = κ u★ / φm ,   φm ≈ 1  (中性)
+νt(σ) = h · w_s · G(σ),   G(σ)=σ(1-σ)^2
+w_s = κ u★ √(1 + Cw / La_t²)     (中性 + Langmuir)
 ```
-Langmuir 增强（LF17 简化）：
-```
-w_s ← w_s · √(1 + C_w / La_t²)
-```
-对通道型算例取 `h = H`；对开洋混合层可由 Ri 判据估计，此处默认 `h = H`
-（无分层时混合至全深）。
+
+默认 `Cw` 按 Xuan & Shen (2025) Fig.2b 的 νt 峰值量级校准：
+对 `La_t=0.3`，`max νt/(u★H)≈0.38` ⇒ `Cw≈3.6`（`G_max=4/27`）。
 """
 struct KPPLTClosure{T<:AbstractFloat}
     κ::T
-    Cw::T       # Li & Fox-Kemper (2017) 量级常数
-    φm::T       # 中性 MOST 稳定度函数
+    Cw::T
+    φm::T
+    αs::T          # Lagrangian 应力权重
     νt_min::T
     use_langmuir::Bool
 end
 
-function KPPLTClosure(; κ = 0.4, Cw = 0.15, φm = 1.0, νt_min = 0.0, use_langmuir = true)
+function KPPLTClosure(; κ = 0.4, Cw = 3.6, φm = 1.0, αs = 1.0,
+                      νt_min = 0.0, use_langmuir = true)
     T = Float64
-    return KPPLTClosure{T}(T(κ), T(Cw), T(φm), T(νt_min), use_langmuir)
+    return KPPLTClosure{T}(T(κ), T(Cw), T(φm), T(αs), T(νt_min), use_langmuir)
 end
 
 shape_G(σ::Real) = σ * (1 - σ)^2
@@ -47,9 +44,7 @@ function eddy_viscosity_kpp!(νt_f::AbstractVector, clos::KPPLTClosure,
     @inbounds for i in eachindex(grid.zf)
         z = grid.zf[i]
         σ = clamp(-z / hBL, 0, 1)
-        # 表面/底界面涡粘置小值，避免与应力 BC 冲突时可保持光滑
         νt_f[i] = max(hBL * ws * shape_G(σ), clos.νt_min)
     end
-    # 保证表面附近有足够混合：σ→0 时 G→0，对风应力驱动是合理的（近壁粘性次层由 ν 承担）
     return νt_f
 end

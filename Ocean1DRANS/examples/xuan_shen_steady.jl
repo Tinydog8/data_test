@@ -1,15 +1,14 @@
 #!/usr/bin/env julia
 #=
-Xuan & Shen (2025) 型无分层 Langmuir 1D-RANS 稳态算例。
+Xuan & Shen (2025) 稳态算例（修正版）
 
-输出：
-  - 稳态背景流 U(z), V(z)
-  - 湍流粘性 ν_t(z)
-  - Stokes 漂移 Us(z)
-  - CSV 廓线文件，可供 resolvent / 后处理使用
+重要：论文 Fig.2(a) 画的是 Lagrangian 平均流 UL=U+Us，且欧拉力几乎可忽略。
+请对比 CSV 中的 **UL** 列与 Us，而不是欧拉 U。
 
-运行（在 Ocean1DRANS 目录）：
-  julia --project=. examples/xuan_shen_steady.jl
+三种闭合：
+  :les      — Fig.2b 数字化 LES νt（与论文最一致，推荐作 resolvent 基流）
+  :kpplt    — 峰值校准的 KPPLT（αs=1 Lagrangian 应力）
+  :klstokes — k–ℓ + Stokes 生产 + Lagrangian 应力
 =#
 
 using Ocean1DRANS
@@ -19,37 +18,19 @@ outdir = joinpath(@__DIR__, "..", "output")
 mkpath(outdir)
 
 for La_t in (0.2, 0.3)
-    @printf("\n========== La_t = %.1f (k–ℓ + Stokes production) ==========\n", La_t)
-    cfg = xuan_shen_config(;
-        Nz = 96,
-        La_t = La_t,
-        Reτ = 1000,
-        k0H = 3.5,
-        E6 = 4.0,
-        nondimensional = true,
-    )
-    sol = run_to_steady(cfg; tol = 2e-5, max_steps = 300_000, check_every = 500, verbose = true)
-    csv = joinpath(outdir, @sprintf("xuan_shen_La%.1f_klstokes.csv", La_t))
-    write_profiles_csv(csv, sol)
-    @printf("Wrote %s\n", csv)
-    @printf("max|U|=%.4f  max(νt)=%.4e  Us(0)=%.4f\n",
-            maximum(abs, sol.state.U), maximum(sol.state.νt_c), cfg.stokes.us_c[end])
-
-    # 对照：KPPLT（一阶闭合）
-    @printf("\n---------- La_t = %.1f (KPPLT) ----------\n", La_t)
-    cfg_kpp = xuan_shen_config(;
-        Nz = 96,
-        La_t = La_t,
-        Reτ = 1000,
-        k0H = 3.5,
-        nondimensional = true,
-        closure = KPPLTClosure(; Cw = 0.15, use_langmuir = true),
-    )
-    sol_kpp = run_to_steady(cfg_kpp; tol = 2e-5, max_steps = 100_000,
-                            check_every = 200, verbose = true)
-    csv_kpp = joinpath(outdir, @sprintf("xuan_shen_La%.1f_kpplt.csv", La_t))
-    write_profiles_csv(csv_kpp, sol_kpp)
-    @printf("Wrote %s\n", csv_kpp)
+    for (tag, clos) in (("les", :les), ("kpplt", :kpplt), ("klstokes", :klstokes))
+        @printf("\n========== La_t=%.1f  closure=%s ==========\n", La_t, tag)
+        cfg = xuan_shen_config(; Nz = 96, La_t = La_t, Reτ = 1000, k0H = 3.5, closure = clos)
+        sol = run_to_steady(cfg; tol = 1e-6, verbose = true)
+        csv = joinpath(outdir, @sprintf("xuan_shen_La%.1f_%s.csv", La_t, tag))
+        write_profiles_csv(csv, sol)
+        Umax = maximum(abs, sol.state.U)
+        Usmax = maximum(abs, cfg.stokes.us_c)
+        ULmax = maximum(abs, sol.state.U .+ cfg.stokes.us_c)
+        @printf("Wrote %s\n", csv)
+        @printf("max|U|=%.4f  max|Us|=%.4f  max|UL|=%.4f  max(νt)=%.4e  |U|/|Us|=%.3f\n",
+                Umax, Usmax, ULmax, maximum(sol.state.νt_c), Umax / Usmax)
+    end
 end
 
-@printf("\nDone. Profiles are in %s\n", outdir)
+@printf("\nDone. 对照论文时请使用 UL 与 nu_t 列。\n")
