@@ -24,7 +24,7 @@ using Ocean1DRANS
     end
 
     @testset "MY25 E6 vs KC04 Fig.1 digitized trend" begin
-        # Implementation gate: E6 must enhance KM (KC04 Fig.1 qualitative)
+        # Channel gate: E6 must enhance KM
         sol4 = run_to_steady(xuan_shen_config(; Nz = 48, La_t = 0.3, closure = :my25, E6 = 4.0);
                              tol = 1e-5, verbose = false)
         sol0 = run_to_steady(xuan_shen_config(; Nz = 48, La_t = 0.3, closure = :my25, E6 = 0.0);
@@ -35,11 +35,24 @@ using Ocean1DRANS
         @test isfile(ref)
         lines = readlines(ref)
         @test occursin("KM_E6_4", lines[1])
-        # last data-ish: parse a mid-depth row
         row = split(lines[findfirst(l -> startswith(l, "-0.50"), lines)], ',')
         @test parse(Float64, row[4]) > parse(Float64, row[2])  # E6=4 > noLC
         les = joinpath(@__DIR__, "..", "data", "mcwilliams1997_fig3b_KM.csv")
         @test isfile(les)
+
+        # McWilliams / KC04 Fig.1 order-of-magnitude (zi=33 m, E6=7.2 correction)
+        zi = 33.0
+        sol_no = run_to_steady(mcwilliams1997_config(; Nz = 48, H = zi, closure = :my25,
+                                                     E6 = 0.0, stokes_production = false);
+                               tol = 1e-4, max_steps = 300, underrelax = 0.3, verbose = false)
+        sol_e72 = run_to_steady(mcwilliams1997_config(; Nz = 48, H = zi, closure = :my25, E6 = 7.2);
+                                tol = 1e-4, max_steps = 400, underrelax = 0.3, verbose = false)
+        scale = 0.0061 * zi
+        peak_no = maximum(sol_no.state.νt_c) / scale
+        peak_e72 = maximum(sol_e72.state.νt_c) / scale
+        @test 0.07 < peak_no < 0.14
+        @test peak_e72 > 1.5 * peak_no
+        @test peak_e72 > 0.15
     end
 
     @testset "Harcourt2015 full SMC" begin

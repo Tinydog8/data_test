@@ -27,28 +27,25 @@ UL = sol.state.U .+ sol.config.stokes.us_c
 | `closure` | 说明 |
 |-----------|------|
 | `:harcourt` / `:h15`（默认） | Harcourt 2015 完整 SMC |
-| `:my25` / `:kc04` | MY2.5 + KC04（``E6=4``，``αs=0``） |
+| `:my25` / `:kc04` | MY2.5 + KC04（通道默认 ``E6=4``；McWilliams 默认 ``E6=7.2``） |
 | `:les` | Fig.2b 数字化 LES `νt` |
 | `:kpplt` | 峰值校准 KPPLT |
 | `:klstokes` | 简化代数 k–ℓ |
 
 对照 Fig.2 时画 **UL** 与 **nu_t**；优先看 `xuan_shen_La0.3_harcourt.csv` 与 `*_les.csv`。
 
-## 验证 MY25 / KC04 是否实现正确
-
-**不要用 Xuan–Shen Fig.2 判断 MY25 的 shape。** 应对照：
-
-1. `data/kc04_fig1_KM.csv` — Kantha & Clayson (2004) Fig.1 数字化 `KM/(u★ zi)`
-2. `data/mcwilliams1997_fig3b_KM.csv` — McWilliams et al. (1997) Fig.3b LES
+## 验证 MY25 / KC04 Fig.1
 
 ```bash
 julia --project=. examples/compare_my25_kc04.jl
-# 主图：output/my25_channel_E6_compare.csv   (nu_t_E6_4 vs nu_t_E6_0)
-# 叠画：output/my25_vs_kc04_fig1.csv         (列名 KM_MY25_channel_E6_*)
-# 摘要：output/E6_gate_summary.txt
+# 叠画：output/my25_vs_kc04_fig1.csv
 ```
 
-硬指标：通道应力平衡上 `E6=4` 相对 `E6=0` 必须明显抬高 `KM`（ratio > 1.5；典型 ≈2.2）。
+McWilliams / KC04 设定要点：
 
-若叠画里看起来 E6=4≈E6=0：多半画的是**旧列** `KM_MY25_E6_*`（来自未充分 spin-up 的 McWilliams+Coriolis，Ps≈0）。
-请改用 `my25_channel_E6_compare.csv` 或新列名 `KM_MY25_channel_E6_*`。
+- `zi = H = 33 m`，稳态 **Ekman–Stokes**（不是未收敛的时间推进）
+- 仅表面壁面律 + 预后 ``q²/q²ℓ``（代数局部平衡会把 ``ℓ`` 压死）
+- **E6=7.2**（Kantha et al. 2010 对原文 E6=4 笔误的更正）对齐 Fig.1 粗红线量级
+- `KM_MY25_noLC` / `KM_MY25_E6_4` / `KM_MY25_E6_7p2` 与数字化 `KM_KC04_*` 同轴比较
+
+通道算例仍可用 `E6=4` 做实现硬指标（`my25_channel_E6_compare.csv`）。

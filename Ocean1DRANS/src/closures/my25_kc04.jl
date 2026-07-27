@@ -32,6 +32,9 @@ struct MY25KC04Closure{T<:AbstractFloat}
     κ::T
     Sm0::T
     αs::T
+    stokes_production::Bool  # false = KC04 "no Langmuir" (Ps≡0 in both eqns)
+    wall_mode::Symbol        # :both (channel) or :surface (open-ocean ML)
+    ℓ_max_frac::T            # ℓ ≤ ℓ_max_frac * H (ML scale cap)
     q2_min::T
     ℓ_min::T
     νt_min::T
@@ -40,10 +43,14 @@ end
 
 function MY25KC04Closure(; B1 = 16.6, Sq = 0.2, Sl = 0.2, E1 = 1.8, E2 = 1.33,
                          E6 = 4.0, κ = 0.4, Sm0 = 0.39327, αs = 0.0,
+                         stokes_production::Bool = true,
+                         wall_mode::Symbol = :both,
+                         ℓ_max_frac = 0.5,
                          q2_min = 1e-10, ℓ_min = 1e-6, νt_min = 0.0, νt_max = Inf)
     T = Float64
     return MY25KC04Closure{T}(T(B1), T(Sq), T(Sl), T(E1), T(E2), T(E6), T(κ), T(Sm0),
-                              T(αs), T(q2_min), T(ℓ_min), T(νt_min), T(νt_max))
+                              T(αs), stokes_production, wall_mode, T(ℓ_max_frac),
+                              T(q2_min), T(ℓ_min), T(νt_min), T(νt_max))
 end
 
 """Kantha–Clayson (2004) defaults (`E6=4`, `αs=0`)."""
@@ -52,14 +59,22 @@ KanthaClayson2004Closure(; kwargs...) = MY25KC04Closure(; kwargs...)
 """Deprecated: use [`Harcourt2015Closure`](@ref) for full SMC; this is KC04+`αs=1`."""
 KC04LagrangianClosure(; kwargs...) = MY25KC04Closure(; αs = 1.0, kwargs...)
 """
-Wall proximity length ``L_z = κ z_s z_b / (z_s + z_b)`` (MY / GOTM).
+Wall proximity length.
+
+- `both`（默认通道）：``L_z = κ z_s z_b / (z_s + z_b)``
+- `surface`（开洋混合层）：``L_z = κ z_s``，混合层底由 ``ℓ_max`` / 分层约束，不当固壁
 """
-function wall_length_Lz!(Lz::AbstractVector, grid::UniformColumnGrid, κ::Real)
+function wall_length_Lz!(Lz::AbstractVector, grid::UniformColumnGrid, κ::Real;
+                         mode::Symbol = :both)
     H = grid.H
     @inbounds for i in eachindex(Lz)
-        zs = max(-grid.zc[i], eps(typeof(H)))          # distance to surface
-        zb = max(H + grid.zc[i], eps(typeof(H)))       # distance to bottom
-        Lz[i] = κ * zs * zb / (zs + zb)
+        zs = max(-grid.zc[i], eps(typeof(H)))
+        if mode === :surface
+            Lz[i] = κ * zs
+        else
+            zb = max(H + grid.zc[i], eps(typeof(H)))
+            Lz[i] = κ * zs * zb / (zs + zb)
+        end
     end
     return Lz
 end
@@ -67,10 +82,11 @@ end
 function initialize_my25!(q2::AbstractVector, q2l::AbstractVector,
                           grid::UniformColumnGrid, u★::Real, clos::MY25KC04Closure)
     Lz = similar(q2)
-    wall_length_Lz!(Lz, grid, clos.κ)
+    wall_length_Lz!(Lz, grid, clos.κ; mode = clos.wall_mode)
     q2s = (clos.B1^(2 / 3)) * u★^2
+    ℓ_cap = clos.ℓ_max_frac * grid.H
     @inbounds for i in eachindex(q2)
-        ℓ = max(0.1 * Lz[i], clos.ℓ_min)
+        ℓ = clamp(0.1 * Lz[i], clos.ℓ_min, ℓ_cap)
         q2[i] = max(q2s * (Lz[i] / max(maximum(Lz), eps())), clos.q2_min)
         q2l[i] = q2[i] * ℓ
     end
@@ -87,10 +103,10 @@ function eddy_viscosity_my25!(νt_f::AbstractVector, νt_c::AbstractVector,
                               q2::AbstractVector, q2l::AbstractVector,
                               clos::MY25KC04Closure, grid::UniformColumnGrid)
     Nz = grid.Nz
-    H = grid.H
+    ℓ_cap = clos.ℓ_max_frac * grid.H
     @inbounds for i in 1:Nz
         q2i = max(q2[i], clos.q2_min)
-        ℓ = clamp(q2l[i] / q2i, clos.ℓ_min, 0.5 * H)
+        ℓ = clamp(q2l[i] / q2i, clos.ℓ_min, ℓ_cap)
         νt_c[i] = clamp(sqrt(q2i) * ℓ * clos.Sm0, clos.νt_min, clos.νt_max)
     end
     νt_f[1] = clos.νt_min
@@ -123,9 +139,10 @@ end
 Shear and Stokes production (KC04):
 ``P = KM S²``, ``P_s = KM (∂U/∂z ∂Us/∂z + ∂V/∂z ∂Vs/∂z)``.
 """
-function my25_production(Uz::Real, Vz::Real, Usz::Real, Vsz::Real, KM::Real)
+function my25_production(Uz::Real, Vz::Real, Usz::Real, Vsz::Real, KM::Real;
+                          stokes_production::Bool = true)
     P = KM * (Uz^2 + Vz^2)
-    Ps = KM * (Uz * Usz + Vz * Vsz)
+    Ps = stokes_production ? KM * (Uz * Usz + Vz * Vsz) : zero(P)
     return P, Ps
 end
 
@@ -142,22 +159,22 @@ function equilibrate_my25!(q2::AbstractVector, q2l::AbstractVector,
     dz = grid.dz
     H = grid.H
     Lz = similar(q2)
-    wall_length_Lz!(Lz, grid, clos.κ)
+    wall_length_Lz!(Lz, grid, clos.κ; mode = clos.wall_mode)
     Uz = similar(q2)
     Vz = similar(q2)
     _shear_at_centers!(Uz, Vz, U, V, dz)
 
+    ℓ_cap = clos.ℓ_max_frac * H
     q2_new = similar(q2)
     q2l_new = similar(q2l)
     @inbounds for i in 1:Nz
         KM = max(νt_c[i], clos.νt_min)
-        P, Ps = my25_production(Uz[i], Vz[i], stokes.dusdz_c[i], stokes.dvsdz_c[i], KM)
+        P, Ps = my25_production(Uz[i], Vz[i], stokes.dusdz_c[i], stokes.dvsdz_c[i], KM;
+                                stokes_production = clos.stokes_production)
         # From q²: P + Ps = q³/(B1 ℓ)  ⇒  q³ = B1 ℓ (P+Ps)
-        # From q²ℓ wall sink: E1 P + E6 Ps = (q³/B1) (1 + E2 (ℓ/Lz)²) / ℓ * ℓ
-        #   = (q³/B1) (1 + E2 (ℓ/Lz)²)
+        # From q²ℓ wall sink: E1 P + E6 Ps = (q³/B1) (1 + E2 (ℓ/Lz)²)
         # Substitute q³/B1 = ℓ (P+Ps):
         #   E1 P + E6 Ps = ℓ (P+Ps) (1 + E2 (ℓ/Lz)²)
-        # Solve for ℓ (scalar Newton / fixed-point).
         Prod = max(P + Ps, 0.0)
         Src_l = max(clos.E1 * P + clos.E6 * Ps, 0.0)
         if Prod < 1e-18 || Src_l < 1e-18
@@ -167,11 +184,11 @@ function equilibrate_my25!(q2::AbstractVector, q2l::AbstractVector,
         end
         Lzi = max(Lz[i], clos.ℓ_min)
         # Fixed point: ℓ = Src_l / (Prod * (1 + E2 (ℓ/Lz)²))
-        ℓ = clamp(q2l[i] / max(q2[i], clos.q2_min), clos.ℓ_min, 0.5 * H)
+        ℓ = clamp(q2l[i] / max(q2[i], clos.q2_min), clos.ℓ_min, ℓ_cap)
         for _ in 1:12
             wall = 1 + clos.E2 * (ℓ / Lzi)^2
             ℓ_tgt = Src_l / (Prod * wall)
-            ℓ = 0.5 * ℓ + 0.5 * clamp(ℓ_tgt, clos.ℓ_min, 0.5 * H)
+            ℓ = 0.5 * ℓ + 0.5 * clamp(ℓ_tgt, clos.ℓ_min, ℓ_cap)
         end
         # q³ = B1 ℓ Prod  ⇒  q² = (B1 ℓ Prod)^{2/3}
         q2_new[i] = max((clos.B1 * ℓ * Prod)^(2 / 3), clos.q2_min)
@@ -236,19 +253,21 @@ function advance_my25!(q2::AbstractVector, q2l::AbstractVector,
     dz = grid.dz
     H = grid.H
     Lz = similar(q2)
-    wall_length_Lz!(Lz, grid, clos.κ)
+    wall_length_Lz!(Lz, grid, clos.κ; mode = clos.wall_mode)
     Uz = similar(q2)
     Vz = similar(q2)
     _shear_at_centers!(Uz, Vz, U, V, dz)
 
+    ℓ_cap = clos.ℓ_max_frac * H
     rhs_q2 = zeros(eltype(q2), Nz)
     rhs_q2l = zeros(eltype(q2), Nz)
     @inbounds for i in 1:Nz
         q2i = max(q2[i], clos.q2_min)
         q = sqrt(q2i)
-        ℓ = clamp(q2l[i] / q2i, clos.ℓ_min, 0.5 * H)
+        ℓ = clamp(q2l[i] / q2i, clos.ℓ_min, ℓ_cap)
         KM = max(νt_c[i], clos.νt_min)
-        P, Ps = my25_production(Uz[i], Vz[i], stokes.dusdz_c[i], stokes.dvsdz_c[i], KM)
+        P, Ps = my25_production(Uz[i], Vz[i], stokes.dusdz_c[i], stokes.dvsdz_c[i], KM;
+                                stokes_production = clos.stokes_production)
         ε = q^3 / (clos.B1 * ℓ)
         rhs_q2[i] = 2 * (P + Ps) - 2 * ε
         wall = 1 + clos.E2 * (ℓ / max(Lz[i], clos.ℓ_min))^2
@@ -296,10 +315,11 @@ end
 function sync_tke_from_q2!(k::AbstractVector, ℓ::AbstractVector,
                            q2::AbstractVector, q2l::AbstractVector,
                            clos::MY25KC04Closure, H::Real)
+    ℓ_cap = clos.ℓ_max_frac * H
     @inbounds for i in eachindex(k)
         q2i = max(q2[i], clos.q2_min)
         k[i] = 0.5 * q2i          # TKE = q²/2
-        ℓ[i] = clamp(q2l[i] / q2i, clos.ℓ_min, 0.5 * H)
+        ℓ[i] = clamp(q2l[i] / q2i, clos.ℓ_min, ℓ_cap)
     end
     return k, ℓ
 end

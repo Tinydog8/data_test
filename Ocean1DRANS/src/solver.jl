@@ -179,6 +179,18 @@ function reconstruct_velocity_from_stress!(φ::AbstractVector, νt_f::AbstractVe
 end
 
 function _reconstruct_uv!(state::ColumnState, cfg::ModelConfig)
+    f = cfg.forcing.f
+    if abs(f) > eps(typeof(f))
+        # Steady Ekman–Stokes spiral (avoids inertial oscillations of time-march)
+        if cfg.closure isa Harcourt2015Closure
+            reconstruct_ekman_stokes!(state.U, state.V, state.νt_f, cfg;
+                                      νcl_f = state.νcl_f)
+        else
+            αs = closure_αs(cfg.closure)
+            reconstruct_ekman_stokes!(state.U, state.V, state.νt_f, cfg; αs = αs)
+        end
+        return state
+    end
     if cfg.closure isa Harcourt2015Closure
         reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
                                           cfg.forcing.Fx, cfg.grid, cfg.forcing.ν;
@@ -309,19 +321,21 @@ function run_to_steady(cfg::ModelConfig{T};
     residual = typemax(T)
     converged = false
     n = 0
-    use_stress_balance = abs(cfg.forcing.f) < eps(T)
+    # f=0 → channel stress balance; f≠0 → steady Ekman–Stokes fixed-point
+    # (same outer loop). Time-march retained only if explicitly requested later.
+    use_fixed_point = true
     αs = closure_αs(cfg.closure)
     clos_name = string(nameof(typeof(cfg.closure)))
+    method = abs(cfg.forcing.f) < eps(T) ? "stress-balance" : "ekman-fixed-point"
 
     if verbose
         @printf("Ocean1DRANS steady run: Nz=%d, La_t=%.3f, αs=%s, closure=%s, method=%s, tol=%.1e\n",
                 cfg.grid.Nz, cfg.La_t,
                 isnan(αs) ? "KMS" : @sprintf("%.2f", αs),
-                clos_name,
-                use_stress_balance ? "stress-balance" : "time-march", tol)
+                clos_name, method, tol)
     end
 
-    if use_stress_balance
+    if use_fixed_point
         ν_old = copy(state.νt_c)
         U_old = copy(state.U)
         k_old = copy(state.k)
@@ -343,30 +357,55 @@ function run_to_steady(cfg::ModelConfig{T};
                                     cfg.closure, cfg.grid.H)
                 _reconstruct_uv!(state, cfg)
             else
-                update_viscosity!(state, cfg)
-                if n > 1 && !(cfg.closure isa LESNutClosure) && !(cfg.closure isa KPPLTClosure)
-                    @. state.νt_c = underrelax * state.νt_c + (1 - underrelax) * ν_old
-                    state.νt_f[1] = zero(T)
-                    state.νt_f[end] = zero(T)
-                    @inbounds for i in 2:cfg.grid.Nz
-                        state.νt_f[i] = 0.5 * (state.νt_c[i - 1] + state.νt_c[i])
+                if cfg.closure isa MY25KC04Closure && abs(cfg.forcing.f) > eps(T)
+                    # Ekman + prognostic TKE: reconstruct → advance q²ℓ → refresh KM
+                    _reconstruct_uv!(state, cfg)
+                    dz = cfg.grid.dz
+                    Δt_tke = min(T(0.25) * dz^2 / max(maximum(state.νt_c), T(1e-8)), T(10))
+                    for _ in 1:40
+                        advance_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
+                                      state.νt_c, state.νt_f, cfg.closure, cfg.grid,
+                                      cfg.forcing.u★, Δt_tke)
                     end
-                end
-                _reconstruct_uv!(state, cfg)
-
-                if cfg.closure isa MY25KC04Closure
-                    equilibrate_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
-                                      state.νt_c, cfg.closure, cfg.grid, cfg.forcing.u★;
-                                      underrelax = underrelax)
                     sync_tke_from_q2!(state.k, state.ℓ, state.q2, state.q2l,
                                       cfg.closure, cfg.grid.H)
-                elseif cfg.closure isa KLStokesClosure
-                    @inbounds for i in 1:cfg.grid.Nz
-                        state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
+                    eddy_viscosity_my25!(state.νt_f, state.νt_c, state.q2, state.q2l,
+                                         cfg.closure, cfg.grid)
+                    if n > 1
+                        @. state.νt_c = underrelax * state.νt_c + (1 - underrelax) * ν_old
+                        state.νt_f[1] = zero(T)
+                        state.νt_f[end] = zero(T)
+                        @inbounds for i in 2:cfg.grid.Nz
+                            state.νt_f[i] = 0.5 * (state.νt_c[i - 1] + state.νt_c[i])
+                        end
                     end
-                    equilibrate_tke!(state.k, state.U, state.V, cfg.stokes, state.νt_c,
-                                     state.ℓ, cfg.closure, cfg.grid)
-                    @. state.k = underrelax * state.k + (1 - underrelax) * k_old
+                    _reconstruct_uv!(state, cfg)
+                else
+                    update_viscosity!(state, cfg)
+                    if n > 1 && !(cfg.closure isa LESNutClosure) && !(cfg.closure isa KPPLTClosure)
+                        @. state.νt_c = underrelax * state.νt_c + (1 - underrelax) * ν_old
+                        state.νt_f[1] = zero(T)
+                        state.νt_f[end] = zero(T)
+                        @inbounds for i in 2:cfg.grid.Nz
+                            state.νt_f[i] = 0.5 * (state.νt_c[i - 1] + state.νt_c[i])
+                        end
+                    end
+                    _reconstruct_uv!(state, cfg)
+
+                    if cfg.closure isa MY25KC04Closure
+                        equilibrate_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
+                                          state.νt_c, cfg.closure, cfg.grid, cfg.forcing.u★;
+                                          underrelax = underrelax)
+                        sync_tke_from_q2!(state.k, state.ℓ, state.q2, state.q2l,
+                                          cfg.closure, cfg.grid.H)
+                    elseif cfg.closure isa KLStokesClosure
+                        @inbounds for i in 1:cfg.grid.Nz
+                            state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
+                        end
+                        equilibrate_tke!(state.k, state.U, state.V, cfg.stokes, state.νt_c,
+                                         state.ℓ, cfg.closure, cfg.grid)
+                        @. state.k = underrelax * state.k + (1 - underrelax) * k_old
+                    end
                 end
             end
 
@@ -402,17 +441,20 @@ function run_to_steady(cfg::ModelConfig{T};
                         end
                     end
                 elseif cfg.closure isa MY25KC04Closure
-                    for _ in 1:20
-                        update_viscosity!(state, cfg)
-                        _reconstruct_uv!(state, cfg)
-                        q2_prev = copy(state.q2)
-                        equilibrate_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
-                                          state.νt_c, cfg.closure, cfg.grid, cfg.forcing.u★;
-                                          underrelax = 0.7)
-                        if maximum(abs, state.q2 .- q2_prev) / max(maximum(state.q2), eps(T)) < tol
-                            break
+                    if abs(cfg.forcing.f) <= eps(T)
+                        for _ in 1:20
+                            update_viscosity!(state, cfg)
+                            _reconstruct_uv!(state, cfg)
+                            q2_prev = copy(state.q2)
+                            equilibrate_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
+                                              state.νt_c, cfg.closure, cfg.grid, cfg.forcing.u★;
+                                              underrelax = 0.7)
+                            if maximum(abs, state.q2 .- q2_prev) / max(maximum(state.q2), eps(T)) < tol
+                                break
+                            end
                         end
                     end
+                    # f≠0: already on prognostic path; do not algebraic-equilibrate
                 elseif cfg.closure isa KLStokesClosure
                     for _ in 1:8
                         update_viscosity!(state, cfg)

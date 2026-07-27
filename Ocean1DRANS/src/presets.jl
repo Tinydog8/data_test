@@ -78,23 +78,32 @@ function xuan_shen_config(;
 end
 
 """
-    mcwilliams1997_config(; Nz=50, H=90, u★=0.0061, La_t=0.3, ...)
+    mcwilliams1997_config(; Nz=64, H=33, u★=0.0061, La_t=0.3, ...)
 
-McWilliams et al. (1997) 型开洋混合层：含 Coriolis 与 Stokes–Coriolis，
-底边界二次拖曳，Stokes 波长默认 60 m。
+McWilliams et al. (1997) / KC04 Fig.1 型开洋混合层：
+- Coriolis（默认 45°，`f = 1.031×10⁻⁴`）与 Stokes–Coriolis
+- 默认 `H = zi = 33 m`（McWilliams 反转层深度；域即混合层）
+- 底边界默认 stress-free（混合层底近似，不当固壁）
+- 单色波 λ=60 m，`La_t=0.3`，`u★=0.0061`
+- MY25：`wall_mode=:surface`；`E6` 默认 **7.2**（Kantha et al. 2010 对 KC04
+  原文 E6=4 笔误的更正；与 Fig.1 粗红线量级一致）
+
+稳态求解走 Ekman 固定点 + 预后 q²/q²ℓ（非时间推进惯性振荡）。
 """
 function mcwilliams1997_config(;
-        Nz::Integer = 50,
-        H::Real = 90.0,
+        Nz::Integer = 64,
+        H::Real = 33.0,
         u★::Real = 0.0061,
         La_t::Real = 0.3,
         wavelength::Real = 60.0,
-        f::Real = 1e-4,
+        f::Real = 1.031e-4,
         ν::Real = 1e-6,
         Cd::Real = 1.5e-3,
+        bottom::Symbol = :stress_free,
         closure = :harcourt,
         E6 = nothing,
         αs::Real = 0.0,
+        stokes_production::Bool = true,
     )
     T = Float64
     H = T(H)
@@ -105,7 +114,7 @@ function mcwilliams1997_config(;
     grid = UniformColumnGrid(Nz, H)
     forcing = Forcing(u★; f = T(f), Fx = 0.0, Fy = 0.0, ν = T(ν))
     stokes = monochromatic_stokes(grid; u★ = u★, La_t = La_t, k0H = k0H)
-    boundary = BoundarySetup(bottom = :quadratic_drag, Cd = Cd)
+    boundary = BoundarySetup(bottom = bottom, Cd = Cd)
     initial = InitialState(U = 0.0, V = 0.0)
 
     clos = if closure isa Symbol
@@ -113,8 +122,10 @@ function mcwilliams1997_config(;
             E6h = isnothing(E6) ? 6.0 : Float64(E6)
             Harcourt2015Closure(; E6 = E6h)
         elseif closure === :my25 || closure === :kc04
-            E6m = isnothing(E6) ? 4.0 : Float64(E6)
-            MY25KC04Closure(; E6 = E6m, αs = αs)
+            # Kantha et al. (2010): KC04 printed E6=4 incorrectly; physical value ≈ 7.2
+            E6m = isnothing(E6) ? 7.2 : Float64(E6)
+            MY25KC04Closure(; E6 = E6m, αs = αs, stokes_production = stokes_production,
+                            wall_mode = :surface, ℓ_max_frac = 0.6)
         elseif closure === :klstokes
             E6m = isnothing(E6) ? 4.0 : Float64(E6)
             KLStokesClosure(; E6 = E6m, αs = 1.0, channel = false)

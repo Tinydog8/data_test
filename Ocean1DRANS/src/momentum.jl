@@ -127,6 +127,123 @@ function apply_body_forces!(U::AbstractVector, V::AbstractVector,
 end
 
 """
+    reconstruct_ekman_stokes!(U, V, νt_f, cfg; αs=0, νcl_f=nothing)
+
+稳态 Ekman–Stokes 螺旋（含 Coriolis / Stokes–Coriolis）：
+
+```
+d/dz[νe ∂U/∂z + σu] + f (V + Vs) + Fx = 0
+d/dz[νe ∂V/∂z + σv] - f (U + Us) + Fy = 0
+```
+
+其中 ``σu = αs νe ∂Us/∂z`` 或 Harcourt 的 ``K_M^S ∂Us/∂z``。
+表面给定应力；底部默认 stress-free（混合层底近似）。
+用鬼点二阶差分组装 ``2 Nz`` 稠密线性系统求解。
+"""
+function reconstruct_ekman_stokes!(U::AbstractVector, V::AbstractVector,
+                                   νt_f::AbstractVector, cfg::ModelConfig;
+                                   αs::Real = 0.0,
+                                   νcl_f = nothing)
+    g = cfg.grid
+    Nz = g.Nz
+    dz = g.dz
+    ν = cfg.forcing.ν
+    f = cfg.forcing.f
+    Fx, Fy = cfg.forcing.Fx, cfg.forcing.Fy
+    τx, τy = cfg.forcing.τx, cfg.forcing.τy
+    T = eltype(U)
+    N = 2Nz
+    A = zeros(T, N, N)
+    rhs = zeros(T, N)
+
+    # Face molecular+eddy viscosity and optional Stokes stress σ
+    νe = similar(νt_f)
+    σu = zeros(T, Nz + 1)
+    σv = zeros(T, Nz + 1)
+    @inbounds for i in 1:Nz + 1
+        νe[i] = ν + νt_f[i]
+        if νcl_f !== nothing
+            σu[i] = νcl_f[i] * cfg.stokes.dusdz_f[i]
+            σv[i] = νcl_f[i] * cfg.stokes.dvsdz_f[i]
+        elseif αs != 0 && !isnan(αs)
+            σu[i] = αs * νe[i] * cfg.stokes.dusdz_f[i]
+            σv[i] = αs * νe[i] * cfg.stokes.dvsdz_f[i]
+        end
+    end
+
+    # Cell-centered second-derivative coefficients use face νe:
+    # Diff_i(φ) ≈ [νe_{i+1}(φ_{i+1}-φ_i) - νe_i(φ_i-φ_{i-1})]/dz²
+    @inbounds for i in 1:Nz
+        ru = i
+        rv = Nz + i
+        Km = νe[i]
+        Kp = νe[i + 1]
+
+        # --- U equation: Diff(U) + dσu/dz + f V = -f Vs - Fx
+        # --- V equation: Diff(V) + dσv/dz - f U =  f Us - Fy
+        A[ru, rv] += f
+        A[rv, ru] -= f
+        rhs[ru] = -f * cfg.stokes.vs_c[i] - Fx
+        rhs[rv] =  f * cfg.stokes.us_c[i] - Fy
+
+        # Stokes-stress divergence (known): (σ_{i+1}-σ_i)/dz → move to rhs as -(...)
+        rhs[ru] -= (σu[i + 1] - σu[i]) / dz
+        rhs[rv] -= (σv[i + 1] - σv[i]) / dz
+
+        # Diffusive couplings with BCs via ghosts
+        # Bottom stress-free: φ_0 = φ_1  ⇒  Km(φ_1-φ_0)=0
+        # Top stress: Kp(φ_{Nz+1}-φ_Nz)/dz + σ_{top} = τ
+        #   ⇒ φ_{Nz+1} = φ_Nz + (τ - σ_{top})*dz/Kp
+
+        # coefficient pattern for Diff on U (same structure for V)
+        # interior-like: Kp/dz² φ_{i+1} - (Kp+Km)/dz² φ_i + Km/dz² φ_{i-1}
+        c_um = Km / dz^2
+        c_up = Kp / dz^2
+        c_uc = -(Km + Kp) / dz^2
+        rhs_u_extra = zero(T)
+        rhs_v_extra = zero(T)
+
+        if i == 1
+            # φ_0 = φ_1: fold c_um into diagonal
+            c_uc += c_um
+            c_um = zero(T)
+        end
+        if i == Nz
+            # U_{Nz+1} = U_Nz + (τx - σu_top)*dz/Kp
+            # V_{Nz+1} = V_Nz + (τy - σv_top)*dz/Kp
+            c_uc += c_up
+            rhs_u_extra -= c_up * ((τx - σu[Nz + 1]) * dz / max(Kp, eps(T)))
+            rhs_v_extra -= c_up * ((τy - σv[Nz + 1]) * dz / max(Kp, eps(T)))
+            # But σ divergence already counted (σ_{Nz+1}-σ_Nz)/dz; top BC
+            # replaces F_{Nz+1}=τ, so σ_{Nz+1} should NOT also appear in Diff via ghost.
+            # We already subtracted (σ_{top}-σ_Nz)/dz from rhs; the ghost form of
+            # Diff uses F_top=τ directly. Remove the σ_top part of divergence:
+            rhs[ru] += σu[Nz + 1] / dz
+            rhs[rv] += σv[Nz + 1] / dz
+            c_up = zero(T)
+        end
+
+        A[ru, ru] += c_uc
+        A[rv, rv] += c_uc
+        if c_um != 0
+            A[ru, i - 1] += c_um
+            A[rv, Nz + i - 1] += c_um
+        end
+        if c_up != 0
+            A[ru, i + 1] += c_up
+            A[rv, Nz + i + 1] += c_up
+        end
+        rhs[ru] += rhs_u_extra
+        rhs[rv] += rhs_v_extra
+    end
+
+    x = A \ rhs
+    U .= view(x, 1:Nz)
+    V .= view(x, Nz + 1:N)
+    return U, V
+end
+
+"""
 由界面有效粘性与表面/底部应力诊断层中心速度剪切。
 稳态关系：`νe ∂U/∂z = τ(z)`，其中 `τ(z) = τ_top + Fx*(z - 0) ...` 更一般地由
 积分动量得到。此处用中心差分诊断瞬时剪切。
