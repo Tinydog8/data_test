@@ -23,6 +23,25 @@ using Ocean1DRANS
         @test cfg.forcing.τx + cfg.forcing.Fx * cfg.grid.H ≈ 0 atol = 1e-14
     end
 
+    @testset "MY25 E6 vs KC04 Fig.1 digitized trend" begin
+        # Implementation gate: E6 must enhance KM (KC04 Fig.1 qualitative)
+        sol4 = run_to_steady(xuan_shen_config(; Nz = 48, La_t = 0.3, closure = :my25, E6 = 4.0);
+                             tol = 1e-5, verbose = false)
+        sol0 = run_to_steady(xuan_shen_config(; Nz = 48, La_t = 0.3, closure = :my25, E6 = 0.0);
+                             tol = 1e-5, verbose = false)
+        @test maximum(sol4.state.νt_c) > 1.5 * maximum(sol0.state.νt_c)
+        # Digitized reference exists and E6=4 peak > noLC peak
+        ref = joinpath(@__DIR__, "..", "data", "kc04_fig1_KM.csv")
+        @test isfile(ref)
+        lines = readlines(ref)
+        @test occursin("KM_E6_4", lines[1])
+        # last data-ish: parse a mid-depth row
+        row = split(lines[findfirst(l -> startswith(l, "-0.50"), lines)], ',')
+        @test parse(Float64, row[4]) > parse(Float64, row[2])  # E6=4 > noLC
+        les = joinpath(@__DIR__, "..", "data", "mcwilliams1997_fig3b_KM.csv")
+        @test isfile(les)
+    end
+
     @testset "Harcourt2015 full SMC" begin
         cfg = xuan_shen_config(; Nz = 64, La_t = 0.3, closure = :harcourt)
         sol = run_to_steady(cfg; tol = 1e-5, max_steps = 3000, verbose = false)

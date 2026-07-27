@@ -33,3 +33,17 @@ UL = sol.state.U .+ sol.config.stokes.us_c
 | `:klstokes` | 简化代数 k–ℓ |
 
 对照 Fig.2 时画 **UL** 与 **nu_t**；优先看 `xuan_shen_La0.3_harcourt.csv` 与 `*_les.csv`。
+
+## 验证 MY25 / KC04 是否实现正确
+
+**不要用 Xuan–Shen Fig.2 判断 MY25 的 shape。** 应对照：
+
+1. `data/kc04_fig1_KM.csv` — Kantha & Clayson (2004) Fig.1 数字化 `KM/(u★ zi)`
+2. `data/mcwilliams1997_fig3b_KM.csv` — McWilliams et al. (1997) Fig.3b LES
+
+```bash
+julia --project=. examples/compare_my25_kc04.jl
+# 叠画结果：output/my25_vs_kc04_fig1.csv
+```
+
+硬指标：通道算例上 `E6=4` 相对 `E6=0` 必须明显抬高 `KM`（脚本要求 ratio > 1.5）。
