@@ -10,11 +10,11 @@ Xuan & Shen (2025) 型无分层 Langmuir 通道：
 默认返回**无量纲**配置（速度用 `u★`、长度用 `H` 无量纲化）。
 
 关键字 `closure`：
-- `:my25` / `:kc04`（默认）— Mellor–Yamada 2.5 + Kantha–Clayson (2004)；GOTM 对齐
-- `:harcourt` — 同上，但动量用 Lagrangian 应力 (`αs=1`)
+- `:harcourt` / `:h15`（推荐）— Harcourt (2015) 完整 SMC（GOTM `cmue_d_h15`）
+- `:my25` / `:kc04` — Mellor–Yamada 2.5 + Kantha–Clayson (2004)
 - `:les` — Fig.2b LES 数字化 νt；论文对照 / resolvent 基流
 - `:kpplt` — 峰值校准的 KPPLT
-- `:klstokes` — 简化代数 k–ℓ（仅作趋势对照，勿当成熟模型）
+- `:klstokes` — 简化代数 k–ℓ（仅作趋势对照）
 - 或传入具体闭合对象
 """
 function xuan_shen_config(;
@@ -25,8 +25,8 @@ function xuan_shen_config(;
         k0H::Real = 3.5,
         u★::Real = 1.0,
         nondimensional::Bool = true,
-        closure = :my25,
-        E6::Real = 4.0,
+        closure = :harcourt,
+        E6 = nothing,
         αs::Real = 0.0,
         κ::Real = 0.4,
         cμ::Real = 0.09,
@@ -48,18 +48,24 @@ function xuan_shen_config(;
     initial = InitialState(U = 0.0, V = 0.0, k = nothing)
 
     clos = if closure isa Symbol
-        if closure === :my25 || closure === :kc04
-            MY25KC04Closure(; κ = κ, E6 = E6, αs = αs, Sm0 = Sm0)
-        elseif closure === :harcourt
-            HarcourtMomentumClosure(; κ = κ, E6 = E6, Sm0 = Sm0)
+        if closure === :harcourt || closure === :h15
+            E6h = isnothing(E6) ? 6.0 : Float64(E6)
+            Harcourt2015Closure(; κ = κ, E6 = E6h)
+        elseif closure === :my25 || closure === :kc04
+            E6m = isnothing(E6) ? 4.0 : Float64(E6)
+            MY25KC04Closure(; κ = κ, E6 = E6m, αs = αs, Sm0 = Sm0)
+        elseif closure === :kc04_lag
+            E6m = isnothing(E6) ? 4.0 : Float64(E6)
+            KC04LagrangianClosure(; κ = κ, E6 = E6m, Sm0 = Sm0)
         elseif closure === :klstokes
-            KLStokesClosure(; κ = κ, cμ = cμ, cε = cε, E6 = E6, αs = 1.0, channel = true)
+            E6m = isnothing(E6) ? 4.0 : Float64(E6)
+            KLStokesClosure(; κ = κ, cμ = cμ, cε = cε, E6 = E6m, αs = 1.0, channel = true)
         elseif closure === :kpplt
             KPPLTClosure(; κ = κ, Cw = Cw, αs = 1.0, use_langmuir = true)
         elseif closure === :les
             LESNutClosure(; La_t = La_t, αs = 1.0)
         else
-            error("unknown closure symbol $closure (use :my25, :kc04, :harcourt, :klstokes, :kpplt, :les)")
+            error("unknown closure symbol $closure (use :harcourt, :my25, :kc04, :les, :kpplt, :klstokes)")
         end
     else
         closure
@@ -86,8 +92,8 @@ function mcwilliams1997_config(;
         f::Real = 1e-4,
         ν::Real = 1e-6,
         Cd::Real = 1.5e-3,
-        closure = :my25,
-        E6::Real = 4.0,
+        closure = :harcourt,
+        E6 = nothing,
         αs::Real = 0.0,
     )
     T = Float64
@@ -103,17 +109,20 @@ function mcwilliams1997_config(;
     initial = InitialState(U = 0.0, V = 0.0)
 
     clos = if closure isa Symbol
-        if closure === :my25 || closure === :kc04
-            MY25KC04Closure(; E6 = E6, αs = αs)
-        elseif closure === :harcourt
-            HarcourtMomentumClosure(; E6 = E6)
+        if closure === :harcourt || closure === :h15
+            E6h = isnothing(E6) ? 6.0 : Float64(E6)
+            Harcourt2015Closure(; E6 = E6h)
+        elseif closure === :my25 || closure === :kc04
+            E6m = isnothing(E6) ? 4.0 : Float64(E6)
+            MY25KC04Closure(; E6 = E6m, αs = αs)
         elseif closure === :klstokes
-            KLStokesClosure(; E6 = E6, αs = 1.0, channel = false)
+            E6m = isnothing(E6) ? 4.0 : Float64(E6)
+            KLStokesClosure(; E6 = E6m, αs = 1.0, channel = false)
         else
             error("unknown closure symbol $closure")
         end
     elseif isnothing(closure)
-        MY25KC04Closure(; E6 = E6, αs = αs)
+        Harcourt2015Closure()
     else
         closure
     end

@@ -5,11 +5,11 @@ Xuan & Shen (2025) 稳态算例
 论文 Fig.2(a) 是 Lagrangian 平均流 UL=U+Us。请对比 CSV 的 UL 与 Us。
 
 闭合：
-  :my25 / :kc04 — Mellor–Yamada 2.5 + Kantha–Clayson (2004)，默认成熟模型
-  :harcourt     — 同上 + Lagrangian 动量应力
-  :les          — Fig.2b 数字化 LES νt（论文对照）
-  :kpplt        — 峰值校准 KPPLT
-  :klstokes     — 简化代数 k–ℓ（仅趋势）
+  :harcourt / :h15 — Harcourt (2015) 完整 SMC（默认，GOTM cmue_d_h15）
+  :my25 / :kc04    — Mellor–Yamada 2.5 + Kantha–Clayson (2004)
+  :les             — Fig.2b 数字化 LES νt（论文对照）
+  :kpplt           — 峰值校准 KPPLT
+  :klstokes        — 简化代数 k–ℓ（仅趋势）
 =#
 
 using Ocean1DRANS
@@ -18,7 +18,7 @@ using Printf
 outdir = joinpath(@__DIR__, "..", "output")
 mkpath(outdir)
 
-closures = (("my25", :my25), ("harcourt", :harcourt), ("les", :les),
+closures = (("harcourt", :harcourt), ("my25", :my25), ("les", :les),
             ("kpplt", :kpplt), ("klstokes", :klstokes))
 
 for La_t in (0.2, 0.3)
@@ -31,10 +31,12 @@ for La_t in (0.2, 0.3)
         Umax = maximum(abs, sol.state.U)
         Usmax = maximum(abs, cfg.stokes.us_c)
         ULmax = maximum(abs, sol.state.U .+ cfg.stokes.us_c)
+        imax = argmax(sol.state.νt_c)
+        σ = -cfg.grid.zc[imax] / cfg.grid.H
         @printf("Wrote %s\n", csv)
-        @printf("max|U|=%.4f  max|Us|=%.4f  max|UL|=%.4f  max(νt)=%.4e  |U|/|Us|=%.3f\n",
-                Umax, Usmax, ULmax, maximum(sol.state.νt_c), Umax / Usmax)
+        @printf("max|U|=%.4f  max|Us|=%.4f  max|UL|=%.4f  max(νt)=%.4e @σ=%.3f  max(νcl)=%.4e\n",
+                Umax, Usmax, ULmax, maximum(sol.state.νt_c), σ, maximum(sol.state.νcl_c))
     end
 end
 
-@printf("\nDone. 成熟模型请看 my25/harcourt；论文对照看 les 的 UL 与 nu_t。\n")
+@printf("\nDone. 推荐对照：harcourt（完整 SMC）与 les（Fig.2）；看 UL 与 nu_t。\n")

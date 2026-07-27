@@ -23,6 +23,19 @@ using Ocean1DRANS
         @test cfg.forcing.τx + cfg.forcing.Fx * cfg.grid.H ≈ 0 atol = 1e-14
     end
 
+    @testset "Harcourt2015 full SMC" begin
+        cfg = xuan_shen_config(; Nz = 64, La_t = 0.3, closure = :harcourt)
+        sol = run_to_steady(cfg; tol = 1e-5, max_steps = 3000, verbose = false)
+        @test sol.converged
+        @test cfg.closure isa Harcourt2015Closure
+        @test cfg.closure.E6 == 6.0
+        @test maximum(sol.state.νt_c) > 0.08
+        @test maximum(sol.state.νcl_c) > 0.0
+        imax = argmax(sol.state.νt_c)
+        σ = -cfg.grid.zc[imax] / cfg.grid.H
+        @test σ > 0.25
+    end
+
     @testset "MY25/KC04 mature closure magnitude" begin
         cfg = xuan_shen_config(; Nz = 64, La_t = 0.3, closure = :my25)
         sol = run_to_steady(cfg; tol = 1e-5, max_steps = 2000, verbose = false)
@@ -89,6 +102,7 @@ using Ocean1DRANS
         header = readline(path)
         @test occursin("UL", header)
         @test occursin("nu_t", header)
+        @test occursin("nu_cl", header)
         rm(path)
     end
 

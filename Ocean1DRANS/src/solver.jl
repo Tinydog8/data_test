@@ -1,12 +1,14 @@
 mutable struct ColumnState{T}
     U::Vector{T}
     V::Vector{T}
-    k::Vector{T}       # TKE (= q²/2 for MY25)
+    k::Vector{T}       # TKE (= q²/2)
     ℓ::Vector{T}
-    q2::Vector{T}      # MY25: twice TKE
-    q2l::Vector{T}     # MY25: q²ℓ
-    νt_f::Vector{T}
-    νt_c::Vector{T}
+    q2::Vector{T}      # twice TKE
+    q2l::Vector{T}     # q²ℓ
+    νt_f::Vector{T}    # KM at faces
+    νt_c::Vector{T}    # KM at centers
+    νcl_f::Vector{T}   # K_M^S (Stokes eddy viscosity) at faces
+    νcl_c::Vector{T}   # K_M^S at centers
     t::T
 end
 
@@ -36,8 +38,9 @@ function init_state(cfg::ModelConfig{T}) where {T}
     V = _eval_initial(cfg.initial.V, g.zc)
     clos = cfg.closure
     if isnothing(cfg.initial.k)
-        if clos isa MY25KC04Closure
-            k0 = 0.5 * (clos.B1^(2 / 3)) * cfg.forcing.u★^2
+        if clos isa MY25KC04Closure || clos isa Harcourt2015Closure
+            B1 = clos.B1
+            k0 = 0.5 * (B1^(2 / 3)) * cfg.forcing.u★^2
         elseif clos isa KLStokesClosure
             k0 = (cfg.forcing.u★^2) / sqrt(clos.cμ)
         else
@@ -47,7 +50,7 @@ function init_state(cfg::ModelConfig{T}) where {T}
     else
         k = _eval_initial(cfg.initial.k, g.zc)
     end
-    κ = if clos isa MY25KC04Closure
+    κ = if clos isa MY25KC04Closure || clos isa Harcourt2015Closure
         clos.κ
     elseif clos isa KLStokesClosure
         clos.κ
@@ -61,7 +64,10 @@ function init_state(cfg::ModelConfig{T}) where {T}
     ℓ = mixing_length(g; κ = κ, ℓ_max = ℓ_max, channel = channel)
     q2 = similar(k)
     q2l = similar(k)
-    if clos isa MY25KC04Closure
+    if clos isa Harcourt2015Closure
+        initialize_harcourt!(q2, q2l, g, cfg.forcing.u★, clos)
+        sync_tke_from_q2_h!(k, ℓ, q2, q2l, clos, g.H)
+    elseif clos isa MY25KC04Closure
         initialize_my25!(q2, q2l, g, cfg.forcing.u★, clos)
         sync_tke_from_q2!(k, ℓ, q2, q2l, clos, g.H)
     else
@@ -70,11 +76,15 @@ function init_state(cfg::ModelConfig{T}) where {T}
     end
     νt_f = zeros(T, g.Nz + 1)
     νt_c = zeros(T, g.Nz)
-    return ColumnState{T}(U, V, k, ℓ, q2, q2l, νt_f, νt_c, zero(T))
+    νcl_f = zeros(T, g.Nz + 1)
+    νcl_c = zeros(T, g.Nz)
+    return ColumnState{T}(U, V, k, ℓ, q2, q2l, νt_f, νt_c, νcl_f, νcl_c, zero(T))
 end
 
 function closure_αs(clos)
-    if hasproperty(clos, :αs)
+    if clos isa Harcourt2015Closure
+        return NaN   # not a single αs; uses independent K_M^S
+    elseif hasproperty(clos, :αs)
         return clos.αs
     end
     return 0.0
@@ -82,10 +92,26 @@ end
 
 function update_viscosity!(state::ColumnState, cfg::ModelConfig)
     clos = cfg.closure
-    if clos isa MY25KC04Closure
+    if clos isa Harcourt2015Closure
+        # provisional SPF=1; equilibrate/advance refreshes SPF + KMS
+        SPF = ones(eltype(state.q2), cfg.grid.Nz)
+        Sm = similar(state.q2)
+        Ss = similar(state.q2)
+        Sh = similar(state.q2)
+        harcourt_diffusivities!(state.νt_c, state.νcl_c, Sm, Ss, Sh,
+                                state.q2, state.q2l, state.U, state.V,
+                                cfg.stokes, SPF, clos, cfg.grid)
+        faces_from_centers!(state.νt_f, state.νt_c, clos.νt_min)
+        faces_from_centers!(state.νcl_f, state.νcl_c, clos.νt_min)
+        sync_tke_from_q2_h!(state.k, state.ℓ, state.q2, state.q2l, clos, cfg.grid.H)
+    elseif clos isa MY25KC04Closure
+        fill!(state.νcl_c, 0)
+        fill!(state.νcl_f, 0)
         eddy_viscosity_my25!(state.νt_f, state.νt_c, state.q2, state.q2l, clos, cfg.grid)
         sync_tke_from_q2!(state.k, state.ℓ, state.q2, state.q2l, clos, cfg.grid.H)
     elseif clos isa KLStokesClosure
+        fill!(state.νcl_c, 0)
+        fill!(state.νcl_f, 0)
         mixing_length!(state.ℓ, cfg.grid;
                        κ = clos.κ, ℓ_max = clos.ℓ_max, channel = clos.channel)
         eddy_viscosity_faces!(state.νt_f, state.k, state.ℓ, clos, cfg.grid)
@@ -93,11 +119,15 @@ function update_viscosity!(state::ColumnState, cfg::ModelConfig)
             state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
         end
     elseif clos isa KPPLTClosure
+        fill!(state.νcl_c, 0)
+        fill!(state.νcl_f, 0)
         eddy_viscosity_kpp!(state.νt_f, clos, cfg.grid, cfg.forcing, cfg.La_t)
         @inbounds for i in 1:cfg.grid.Nz
             state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
         end
     elseif clos isa LESNutClosure
+        fill!(state.νcl_c, 0)
+        fill!(state.νcl_f, 0)
         eddy_viscosity_les!(state.νt_f, clos, cfg.grid, cfg.forcing)
         @inbounds for i in 1:cfg.grid.Nz
             state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
@@ -111,17 +141,22 @@ end
 """
 由应力平衡重建欧拉速度。
 
-Lagrangian / Harcourt 动量通量：
+标准 / αs 形式：
 ```
-τ = (ν+νt)(∂U/∂z + αs ∂Us/∂z)  ⇒  ∂U/∂z = τ/(ν+νt) - αs ∂Us/∂z
+τ = (ν+KM)(∂U/∂z + αs ∂Us/∂z)
 ```
-严格 KC04 取 `αs=0`。
+完整 Harcourt：
+```
+τ = (ν+KM) ∂U/∂z + K_M^S ∂Us/∂z
+⇒ ∂U/∂z = (τ - K_M^S ∂Us/∂z)/(ν+KM)
+```
 """
 function reconstruct_velocity_from_stress!(φ::AbstractVector, νt_f::AbstractVector,
                                            τ_top::Real, Fbody::Real,
                                            grid::UniformColumnGrid, ν::Real;
                                            αs::Real = 0.0,
-                                           dUsdz_f = nothing)
+                                           dUsdz_f = nothing,
+                                           νcl_f = nothing)
     Nz = grid.Nz
     dz = grid.dz
     φ[1] = zero(eltype(φ))
@@ -129,9 +164,14 @@ function reconstruct_velocity_from_stress!(φ::AbstractVector, νt_f::AbstractVe
         z_face = grid.zf[i + 1]
         νe = ν + νt_f[i + 1]
         τ = τ_top - Fbody * z_face
-        shear = τ / max(νe, eps(typeof(νe)))
-        if αs != 0 && dUsdz_f !== nothing
-            shear -= αs * dUsdz_f[i + 1]
+        if νcl_f !== nothing && dUsdz_f !== nothing
+            τ_eff = τ - νcl_f[i + 1] * dUsdz_f[i + 1]
+            shear = τ_eff / max(νe, eps(typeof(νe)))
+        else
+            shear = τ / max(νe, eps(typeof(νe)))
+            if αs != 0 && !isnan(αs) && dUsdz_f !== nothing
+                shear -= αs * dUsdz_f[i + 1]
+            end
         end
         φ[i + 1] = φ[i] + shear * dz
     end
@@ -139,13 +179,22 @@ function reconstruct_velocity_from_stress!(φ::AbstractVector, νt_f::AbstractVe
 end
 
 function _reconstruct_uv!(state::ColumnState, cfg::ModelConfig)
-    αs = closure_αs(cfg.closure)
-    reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
-                                      cfg.forcing.Fx, cfg.grid, cfg.forcing.ν;
-                                      αs = αs, dUsdz_f = cfg.stokes.dusdz_f)
-    reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
-                                      cfg.forcing.Fy, cfg.grid, cfg.forcing.ν;
-                                      αs = αs, dUsdz_f = cfg.stokes.dvsdz_f)
+    if cfg.closure isa Harcourt2015Closure
+        reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
+                                          cfg.forcing.Fx, cfg.grid, cfg.forcing.ν;
+                                          dUsdz_f = cfg.stokes.dusdz_f, νcl_f = state.νcl_f)
+        reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
+                                          cfg.forcing.Fy, cfg.grid, cfg.forcing.ν;
+                                          dUsdz_f = cfg.stokes.dvsdz_f, νcl_f = state.νcl_f)
+    else
+        αs = closure_αs(cfg.closure)
+        reconstruct_velocity_from_stress!(state.U, state.νt_f, cfg.forcing.τx,
+                                          cfg.forcing.Fx, cfg.grid, cfg.forcing.ν;
+                                          αs = αs, dUsdz_f = cfg.stokes.dusdz_f)
+        reconstruct_velocity_from_stress!(state.V, state.νt_f, cfg.forcing.τy,
+                                          cfg.forcing.Fy, cfg.grid, cfg.forcing.ν;
+                                          αs = αs, dUsdz_f = cfg.stokes.dvsdz_f)
+    end
     return state
 end
 
@@ -187,7 +236,16 @@ function timestep!(state::ColumnState, cfg::ModelConfig, dt::Real)
                       φ_bottom_companion = state.V)
     diffuse_velocity!(state.V, νe, forc.τy, g, cfg.boundary, dt;
                       φ_bottom_companion = state.U)
-    if cfg.closure isa MY25KC04Closure
+    # Harcourt: add explicit Stokes-flux divergence ∂z(KMS ∂Us/∂z)
+    if cfg.closure isa Harcourt2015Closure
+        _add_stokes_flux_tendency!(state.U, state.νcl_f, cfg.stokes.dusdz_f, g, dt)
+        _add_stokes_flux_tendency!(state.V, state.νcl_f, cfg.stokes.dvsdz_f, g, dt)
+        Sh = fill(0.4, g.Nz)
+        SPF = ones(g.Nz)
+        advance_harcourt!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
+                          state.νt_c, state.νcl_c, Sh, SPF, cfg.closure, g, forc.u★, dt)
+        update_viscosity!(state, cfg)
+    elseif cfg.closure isa MY25KC04Closure
         advance_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
                       state.νt_c, state.νt_f, cfg.closure, g, forc.u★, dt)
         update_viscosity!(state, cfg)
@@ -200,8 +258,20 @@ function timestep!(state::ColumnState, cfg::ModelConfig, dt::Real)
     return state
 end
 
+function _add_stokes_flux_tendency!(φ::AbstractVector, νcl_f::AbstractVector,
+                                    dUsdz_f::AbstractVector, grid::UniformColumnGrid, dt::Real)
+    Nz = grid.Nz
+    dz = grid.dz
+    @inbounds for i in 1:Nz
+        Ftop = νcl_f[i + 1] * dUsdz_f[i + 1]
+        Fbot = νcl_f[i] * dUsdz_f[i]
+        φ[i] += dt * (Ftop - Fbot) / dz
+    end
+    return φ
+end
+
 function estimate_dt(state::ColumnState, cfg::ModelConfig; cfl::Real = 0.3)
-    νmax = maximum(cfg.forcing.ν .+ state.νt_f)
+    νmax = maximum(cfg.forcing.ν .+ state.νt_f .+ state.νcl_f)
     dt_diff = cfl * cfg.grid.dz^2 / max(νmax, eps(typeof(νmax)))
     dt_fric = 0.1 * cfg.grid.H / max(cfg.forcing.u★, eps(typeof(cfg.forcing.u★)))
     return min(dt_diff, dt_fric)
@@ -222,7 +292,7 @@ end
     run_to_steady(cfg; kwargs...) -> SteadySolution
 
 迭代求解稳态背景流与湍流粘性。无 Coriolis 时用应力平衡；
-有 Coriolis 时用时间推进。默认成熟闭合为 MY2.5/KC04。
+有 Coriolis 时用时间推进。
 """
 function run_to_steady(cfg::ModelConfig{T};
                        tol::Real = 1e-6,
@@ -244,8 +314,10 @@ function run_to_steady(cfg::ModelConfig{T};
     clos_name = string(nameof(typeof(cfg.closure)))
 
     if verbose
-        @printf("Ocean1DRANS steady run: Nz=%d, La_t=%.3f, αs=%.2f, closure=%s, method=%s, tol=%.1e\n",
-                cfg.grid.Nz, cfg.La_t, αs, clos_name,
+        @printf("Ocean1DRANS steady run: Nz=%d, La_t=%.3f, αs=%s, closure=%s, method=%s, tol=%.1e\n",
+                cfg.grid.Nz, cfg.La_t,
+                isnan(αs) ? "KMS" : @sprintf("%.2f", αs),
+                clos_name,
                 use_stress_balance ? "stress-balance" : "time-march", tol)
     end
 
@@ -253,34 +325,49 @@ function run_to_steady(cfg::ModelConfig{T};
         ν_old = copy(state.νt_c)
         U_old = copy(state.U)
         k_old = copy(state.k)
-        q2_old = copy(state.q2)
         while n < max_steps
             n += 1
-            update_viscosity!(state, cfg)
-            if n > 1 && !(cfg.closure isa LESNutClosure) && !(cfg.closure isa KPPLTClosure)
-                @. state.νt_c = underrelax * state.νt_c + (1 - underrelax) * ν_old
-                state.νt_f[1] = zero(T)
-                state.νt_f[end] = zero(T)
-                @inbounds for i in 2:cfg.grid.Nz
-                    state.νt_f[i] = 0.5 * (state.νt_c[i - 1] + state.νt_c[i])
-                end
-            end
 
-            _reconstruct_uv!(state, cfg)
-
-            if cfg.closure isa MY25KC04Closure
-                equilibrate_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
-                                  state.νt_c, cfg.closure, cfg.grid, cfg.forcing.u★;
-                                  underrelax = underrelax)
-                sync_tke_from_q2!(state.k, state.ℓ, state.q2, state.q2l,
-                                  cfg.closure, cfg.grid.H)
-            elseif cfg.closure isa KLStokesClosure
-                @inbounds for i in 1:cfg.grid.Nz
-                    state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
+            if cfg.closure isa Harcourt2015Closure
+                # Consistent fixed-point: reconstruct → ARSM+SPF equilibrate → diffusivities
+                U_old .= state.U
+                ν_old .= state.νt_c
+                _reconstruct_uv!(state, cfg)
+                Sh = fill(T(0.4), cfg.grid.Nz)
+                equilibrate_harcourt!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
+                                      state.νt_c, state.νcl_c, Sh, cfg.closure, cfg.grid,
+                                      cfg.forcing.u★; underrelax = min(underrelax, 0.35))
+                faces_from_centers!(state.νt_f, state.νt_c, cfg.closure.νt_min)
+                faces_from_centers!(state.νcl_f, state.νcl_c, cfg.closure.νt_min)
+                sync_tke_from_q2_h!(state.k, state.ℓ, state.q2, state.q2l,
+                                    cfg.closure, cfg.grid.H)
+                _reconstruct_uv!(state, cfg)
+            else
+                update_viscosity!(state, cfg)
+                if n > 1 && !(cfg.closure isa LESNutClosure) && !(cfg.closure isa KPPLTClosure)
+                    @. state.νt_c = underrelax * state.νt_c + (1 - underrelax) * ν_old
+                    state.νt_f[1] = zero(T)
+                    state.νt_f[end] = zero(T)
+                    @inbounds for i in 2:cfg.grid.Nz
+                        state.νt_f[i] = 0.5 * (state.νt_c[i - 1] + state.νt_c[i])
+                    end
                 end
-                equilibrate_tke!(state.k, state.U, state.V, cfg.stokes, state.νt_c,
-                                 state.ℓ, cfg.closure, cfg.grid)
-                @. state.k = underrelax * state.k + (1 - underrelax) * k_old
+                _reconstruct_uv!(state, cfg)
+
+                if cfg.closure isa MY25KC04Closure
+                    equilibrate_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
+                                      state.νt_c, cfg.closure, cfg.grid, cfg.forcing.u★;
+                                      underrelax = underrelax)
+                    sync_tke_from_q2!(state.k, state.ℓ, state.q2, state.q2l,
+                                      cfg.closure, cfg.grid.H)
+                elseif cfg.closure isa KLStokesClosure
+                    @inbounds for i in 1:cfg.grid.Nz
+                        state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
+                    end
+                    equilibrate_tke!(state.k, state.U, state.V, cfg.stokes, state.νt_c,
+                                     state.ℓ, cfg.closure, cfg.grid)
+                    @. state.k = underrelax * state.k + (1 - underrelax) * k_old
+                end
             end
 
             dU = maximum(abs, state.U .- U_old)
@@ -291,13 +378,30 @@ function run_to_steady(cfg::ModelConfig{T};
 
             if verbose && (n % 20 == 0 || residual < tol || n == 1)
                 UL = maximum(abs, state.U .+ cfg.stokes.us_c)
-                @printf("  iter %5d  residual=%.3e  max|U|=%.4f  max|UL|=%.4f  max(νt)=%.4e\n",
-                        n, residual, maximum(abs, state.U), UL, maximum(state.νt_c))
+                @printf("  iter %5d  residual=%.3e  max|U|=%.4f  max|UL|=%.4f  max(νt)=%.4e  max(νcl)=%.4e\n",
+                        n, residual, maximum(abs, state.U), UL,
+                        maximum(state.νt_c), maximum(state.νcl_c))
             end
 
             diagnostic_done = cfg.closure isa LESNutClosure || cfg.closure isa KPPLTClosure
             if residual < tol || diagnostic_done
-                if cfg.closure isa MY25KC04Closure
+                if cfg.closure isa Harcourt2015Closure
+                    for _ in 1:15
+                        U_prev = copy(state.U)
+                        _reconstruct_uv!(state, cfg)
+                        Sh = fill(T(0.4), cfg.grid.Nz)
+                        q2_prev = copy(state.q2)
+                        equilibrate_harcourt!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
+                                              state.νt_c, state.νcl_c, Sh, cfg.closure, cfg.grid,
+                                              cfg.forcing.u★; underrelax = 0.7)
+                        faces_from_centers!(state.νt_f, state.νt_c, cfg.closure.νt_min)
+                        faces_from_centers!(state.νcl_f, state.νcl_c, cfg.closure.νt_min)
+                        if maximum(abs, state.q2 .- q2_prev) / max(maximum(state.q2), eps(T)) < tol &&
+                           maximum(abs, state.U .- U_prev) / scale < tol
+                            break
+                        end
+                    end
+                elseif cfg.closure isa MY25KC04Closure
                     for _ in 1:20
                         update_viscosity!(state, cfg)
                         _reconstruct_uv!(state, cfg)
@@ -324,16 +428,24 @@ function run_to_steady(cfg::ModelConfig{T};
                         end
                     end
                 end
-                update_viscosity!(state, cfg)
+                if cfg.closure isa Harcourt2015Closure
+                    faces_from_centers!(state.νt_f, state.νt_c, cfg.closure.νt_min)
+                    faces_from_centers!(state.νcl_f, state.νcl_c, cfg.closure.νt_min)
+                    sync_tke_from_q2_h!(state.k, state.ℓ, state.q2, state.q2l,
+                                        cfg.closure, cfg.grid.H)
+                else
+                    update_viscosity!(state, cfg)
+                end
                 _reconstruct_uv!(state, cfg)
                 converged = true
                 residual = min(residual, tol)
                 break
             end
-            U_old .= state.U
-            ν_old .= state.νt_c
-            k_old .= state.k
-            q2_old .= state.q2
+            if !(cfg.closure isa Harcourt2015Closure)
+                U_old .= state.U
+                ν_old .= state.νt_c
+                k_old .= state.k
+            end
         end
     else
         Δt = isnothing(dt) ? estimate_dt(state, cfg; cfl = cfl) : T(dt)
@@ -370,15 +482,16 @@ function run_to_steady(cfg::ModelConfig{T};
     if verbose
         @printf("Finished: converged=%s, iters=%d, residual=%.3e, wall=%.2fs\n",
                 converged, n, residual, wall)
-        @printf("  max|U|=%.4f  max|Us|=%.4f  max|UL|=%.4f  max(νt)=%.4e\n",
+        @printf("  max|U|=%.4f  max|Us|=%.4f  max|UL|=%.4f  max(νt)=%.4e  max(νcl)=%.4e\n",
                 maximum(abs, state.U), maximum(abs, cfg.stokes.us_c),
-                maximum(abs, state.U .+ cfg.stokes.us_c), maximum(state.νt_c))
+                maximum(abs, state.U .+ cfg.stokes.us_c),
+                maximum(state.νt_c), maximum(state.νcl_c))
     end
     return SteadySolution(cfg, state, converged, n, T(residual), wall)
 end
 
 """
-诊断应力：`τ(z)=τx - Fx z`，以及剪切重建。
+诊断应力。Harcourt：`τ = (ν+KM)Uz + KMS Usz`；其余可用 αs 形式。
 """
 function diagnostic_stress_balance(sol::SteadySolution)
     cfg = sol.config
@@ -389,7 +502,13 @@ function diagnostic_stress_balance(sol::SteadySolution)
     Uz_f = similar(g.zf)
     @inbounds for i in eachindex(g.zf)
         τ_f[i] = cfg.forcing.τx - cfg.forcing.Fx * g.zf[i]
-        Uz_f[i] = τ_f[i] / max(νe[i], eps(eltype(νe))) - αs * cfg.stokes.dusdz_f[i]
+        if cfg.closure isa Harcourt2015Closure
+            Uz_f[i] = (τ_f[i] - sol.state.νcl_f[i] * cfg.stokes.dusdz_f[i]) /
+                      max(νe[i], eps(eltype(νe)))
+        else
+            a = isnan(αs) ? 0.0 : αs
+            Uz_f[i] = τ_f[i] / max(νe[i], eps(eltype(νe))) - a * cfg.stokes.dusdz_f[i]
+        end
     end
-    return (; νe, τ_f, Uz_f, αs)
+    return (; νe, τ_f, Uz_f, αs, νcl = sol.state.νcl_f)
 end

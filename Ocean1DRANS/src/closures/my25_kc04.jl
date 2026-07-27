@@ -49,9 +49,8 @@ end
 """Kantha–Clayson (2004) defaults (`E6=4`, `αs=0`)."""
 KanthaClayson2004Closure(; kwargs...) = MY25KC04Closure(; kwargs...)
 
-"""KC04 TKE/length equations with Harcourt Lagrangian stress (`αs=1`)."""
-HarcourtMomentumClosure(; kwargs...) = MY25KC04Closure(; αs = 1.0, kwargs...)
-
+"""Deprecated: use [`Harcourt2015Closure`](@ref) for full SMC; this is KC04+`αs=1`."""
+KC04LagrangianClosure(; kwargs...) = MY25KC04Closure(; αs = 1.0, kwargs...)
 """
 Wall proximity length ``L_z = κ z_s z_b / (z_s + z_b)`` (MY / GOTM).
 """

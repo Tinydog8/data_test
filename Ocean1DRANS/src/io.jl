@@ -17,6 +17,7 @@ function profile_dict(sol::SteadySolution)
         "k" => copy(st.k),
         "ell" => copy(st.ℓ),
         "nu_t" => copy(st.νt_c),
+        "nu_cl" => copy(st.νcl_c),
         "nu_t_faces" => copy(st.νt_f),
         "Us" => copy(cfg.stokes.us_c),
         "Vs" => copy(cfg.stokes.vs_c),
@@ -45,14 +46,14 @@ function write_profiles_csv(path::AbstractString, sol::SteadySolution)
     st = sol.state
     g = cfg.grid
     open(path, "w") do io
-        println(io, "z,U,V,UL,VL,Us,Vs,k,nu_t,ell")
+        println(io, "z,U,V,UL,VL,Us,Vs,k,nu_t,nu_cl,ell")
         for i in eachindex(g.zc)
             UL = st.U[i] + cfg.stokes.us_c[i]
             VL = st.V[i] + cfg.stokes.vs_c[i]
-            @printf(io, "%.8e,%.8e,%.8e,%.8e,%.8e,%.8e,%.8e,%.8e,%.8e,%.8e\n",
+            @printf(io, "%.8e,%.8e,%.8e,%.8e,%.8e,%.8e,%.8e,%.8e,%.8e,%.8e,%.8e\n",
                     g.zc[i], st.U[i], st.V[i], UL, VL,
                     cfg.stokes.us_c[i], cfg.stokes.vs_c[i],
-                    st.k[i], st.νt_c[i], st.ℓ[i])
+                    st.k[i], st.νt_c[i], st.νcl_c[i], st.ℓ[i])
         end
     end
     return path
