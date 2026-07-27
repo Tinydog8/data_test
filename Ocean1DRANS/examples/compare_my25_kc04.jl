@@ -172,12 +172,11 @@ println("How to plot")
 println("="^72)
 println("""
   对 KC04 Fig.1：output/my25_vs_kc04_fig1.csv
-    - KM_KC04_*          论文数字化
-    - KM_MY25_noLC       本模型无 Langmuir 湍产生
-    - KM_MY25_E6_4       原文系数（增强有限）
-    - KM_MY25_E6_7p2     更正系数（应对齐粗红线量级）
-
-  通道 E6 硬指标：output/my25_channel_E6_compare.csv
+    谁和谁比：
+      KM_MY25_noLC   ↔ KM_KC04_noLC     （无 Langmuir）
+      KM_MY25_E6_7p2 ↔ KM_KC04_E6_4     （有 Langmuir；7.2=原文笔误更正）
+      KM_MY25_E6_4   仅作对照（原文印刷值，增强偏弱）
+    不要拿通道曲线去比 Fig.1。
 """)
 
 ok = ok_no && ok_e72 && ok_ch

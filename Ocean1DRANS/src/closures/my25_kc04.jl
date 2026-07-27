@@ -33,7 +33,7 @@ struct MY25KC04Closure{T<:AbstractFloat}
     Sm0::T
     αs::T
     stokes_production::Bool  # false = KC04 "no Langmuir" (Ps≡0 in both eqns)
-    wall_mode::Symbol        # :both (channel) or :surface (open-ocean ML)
+    wall_mode::Symbol        # :both | :surface | :ml (surface wall + thermocline pin)
     ℓ_max_frac::T            # ℓ ≤ ℓ_max_frac * H (ML scale cap)
     q2_min::T
     ℓ_min::T
@@ -61,15 +61,15 @@ KC04LagrangianClosure(; kwargs...) = MY25KC04Closure(; αs = 1.0, kwargs...)
 """
 Wall proximity length.
 
-- `both`（默认通道）：``L_z = κ z_s z_b / (z_s + z_b)``
-- `surface`（开洋混合层）：``L_z = κ z_s``，混合层底由 ``ℓ_max`` / 分层约束，不当固壁
+- `:both`：通道双壁 ``L_z = κ z_s z_b/(z_s+z_b)``
+- `:surface` / `:ml`：开洋混合层 ``L_z = κ z_s``（温跃层用底边界钉住 TKE，见 `pin_thermocline!`）
 """
 function wall_length_Lz!(Lz::AbstractVector, grid::UniformColumnGrid, κ::Real;
                          mode::Symbol = :both)
     H = grid.H
     @inbounds for i in eachindex(Lz)
         zs = max(-grid.zc[i], eps(typeof(H)))
-        if mode === :surface
+        if mode === :surface || mode === :ml
             Lz[i] = κ * zs
         else
             zb = max(H + grid.zc[i], eps(typeof(H)))
@@ -77,6 +77,15 @@ function wall_length_Lz!(Lz::AbstractVector, grid::UniformColumnGrid, κ::Real;
         end
     end
     return Lz
+end
+
+"""Pin TKE at ML base (thermocline surrogate) so KM→0 at z=−zi."""
+function pin_thermocline!(q2::AbstractVector, q2l::AbstractVector, clos::MY25KC04Closure)
+    if clos.wall_mode === :ml || clos.wall_mode === :surface
+        q2[1] = clos.q2_min
+        q2l[1] = clos.q2_min * clos.ℓ_min
+    end
+    return q2, q2l
 end
 
 function initialize_my25!(q2::AbstractVector, q2l::AbstractVector,
@@ -93,6 +102,7 @@ function initialize_my25!(q2::AbstractVector, q2l::AbstractVector,
     # Surface Dirichlet scale
     q2[end] = max(q2s, clos.q2_min)
     q2l[end] = q2[end] * max(clos.κ * (grid.dz / 2), clos.ℓ_min)
+    pin_thermocline!(q2, q2l, clos)
     return q2, q2l
 end
 
@@ -213,6 +223,7 @@ function equilibrate_my25!(q2::AbstractVector, q2l::AbstractVector,
         q2[end] = max(q2s, clos.q2_min)
         q2l[end] = q2[end] * ℓs
     end
+    pin_thermocline!(q2, q2l, clos)
     return q2, q2l
 end
 
@@ -309,6 +320,7 @@ function advance_my25!(q2::AbstractVector, q2l::AbstractVector,
     ℓs = max(clos.κ * (dz / 2), clos.ℓ_min)
     q2[end] = max(q2s, clos.q2_min)
     q2l[end] = q2[end] * ℓs
+    pin_thermocline!(q2, q2l, clos)
     return q2, q2l
 end
 

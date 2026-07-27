@@ -125,7 +125,7 @@ function mcwilliams1997_config(;
             # Kantha et al. (2010): KC04 printed E6=4 incorrectly; physical value ≈ 7.2
             E6m = isnothing(E6) ? 7.2 : Float64(E6)
             MY25KC04Closure(; E6 = E6m, αs = αs, stokes_production = stokes_production,
-                            wall_mode = :surface, ℓ_max_frac = 0.6)
+                            wall_mode = :ml, ℓ_max_frac = 0.6)
         elseif closure === :klstokes
             E6m = isnothing(E6) ? 4.0 : Float64(E6)
             KLStokesClosure(; E6 = E6m, αs = 1.0, channel = false)
