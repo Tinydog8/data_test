@@ -95,9 +95,12 @@ end
 function check_tke_production_dissipation(sol::SteadySolution; rtol = 0.05)
     cfg = sol.config
     clos = cfg.closure
+    if clos isa MY25KC04Closure
+        return check_my25_production_dissipation(sol; rtol = rtol)
+    end
     clos isa KLStokesClosure || return _pass(
         "TKE production–dissipation balance", true,
-        "skipped (closure is not KLStokes)"; metric = 0.0)
+        "skipped (closure is not KLStokes/MY25)"; metric = 0.0)
 
     g = cfg.grid
     U, V, k, ℓ = sol.state.U, sol.state.V, sol.state.k, sol.state.ℓ
@@ -126,6 +129,55 @@ function check_tke_production_dissipation(sol::SteadySolution; rtol = 0.05)
     ok = n > 0 && max_rel < rtol
     detail = @sprintf("max|P+PS-ε|/|Prod|=%.3e  mean=%.3e  (n=%d)", max_rel, mean_rel, n)
     return _pass("TKE production–dissipation balance", ok, detail; metric = max_rel)
+end
+
+function check_my25_production_dissipation(sol::SteadySolution; rtol = 0.15)
+    cfg = sol.config
+    clos = cfg.closure
+    g = cfg.grid
+    U, V = sol.state.U, sol.state.V
+    q2, q2l = sol.state.q2, sol.state.q2l
+    νt_c = sol.state.νt_c
+    dz = g.dz
+    max_rel = 0.0
+    n = 0
+    @inbounds for i in 2:g.Nz-1
+        σ = -g.zc[i] / g.H
+        (σ < 0.15 || σ > 0.85) && continue
+        Uz = (U[i + 1] - U[i - 1]) / (2dz)
+        Vz = (V[i + 1] - V[i - 1]) / (2dz)
+        P, Ps = my25_production(Uz, Vz, cfg.stokes.dusdz_c[i], cfg.stokes.dvsdz_c[i], νt_c[i])
+        Prod = P + Ps
+        q2i = max(q2[i], clos.q2_min)
+        ℓ = max(q2l[i] / q2i, clos.ℓ_min)
+        ε = (sqrt(q2i)^3) / (clos.B1 * ℓ)
+        if abs(Prod) > 1e-12
+            rel = abs(Prod - ε) / abs(Prod)
+            max_rel = max(max_rel, rel)
+            n += 1
+        end
+    end
+    ok = n > 0 && max_rel < rtol
+    detail = @sprintf("MY25 max|P+Ps-ε|/|Prod|=%.3e (n=%d)", max_rel, n)
+    return _pass("MY25 q² production–dissipation balance", ok, detail; metric = max_rel)
+end
+
+function check_my25_les_magnitude(; Nz = 64)
+    # KC04 with E6=4 should lift KM into LES order (not 10× low)
+    sol_on = run_to_steady(xuan_shen_config(; Nz = Nz, La_t = 0.3, E6 = 4.0, closure = :my25);
+                           tol = 1e-5, max_steps = 2000, verbose = false)
+    sol_off = run_to_steady(xuan_shen_config(; Nz = Nz, La_t = 0.3, E6 = 0.0, closure = :my25);
+                            tol = 1e-5, max_steps = 2000, verbose = false)
+    ν_on = maximum(sol_on.state.νt_c)
+    ν_off = maximum(sol_off.state.νt_c)
+    # LES peak ~0.38; mature KC04 should be O(0.1) or above, not O(0.03)
+    ok_mag = sol_on.converged && ν_on > 0.08
+    ok_E6 = ν_on > ν_off * 1.05
+    ok = ok_mag && ok_E6
+    detail = @sprintf("MY25 La0.3 νtmax E6=4/0: %.3e/%.3e (target ≳0.08 with E6)",
+                      ν_on, ν_off)
+    return _pass("MY25/KC04 νt magnitude vs LES order (E6)", ok, detail;
+                 metric = ν_on)
 end
 
 # ---------------------------------------------------------------------------
@@ -236,6 +288,16 @@ function run_physics_validation(; les_csv::AbstractString = "",
     cfg_kl = xuan_shen_config(; Nz = Nz, La_t = 0.3, closure = :klstokes)
     sol_kl = run_to_steady(cfg_kl; tol = 1e-6, verbose = false)
     push!(results, check_tke_production_dissipation(sol_kl))
+
+    cfg_my = xuan_shen_config(; Nz = Nz, La_t = 0.3, closure = :my25)
+    sol_my = run_to_steady(cfg_my; tol = 1e-5, max_steps = 2000, verbose = false)
+    push!(results, _pass("steady convergence (MY25/KC04 La_t=0.3)", sol_my.converged,
+                         @sprintf("iters=%d residual=%.3e maxνt=%.3e",
+                                  sol_my.iterations, sol_my.residual, maximum(sol_my.state.νt_c));
+                         metric = maximum(sol_my.state.νt_c)))
+    push!(results, check_tke_production_dissipation(sol_my))
+    push!(results, check_my25_les_magnitude(; Nz = min(Nz, 64)))
+
     push!(results, check_langmuir_mixing_trends(; Nz = min(Nz, 48)))
     push!(results, check_kpp_shape_peak(; Nz = max(Nz, 96)))
 

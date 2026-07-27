@@ -23,6 +23,20 @@ using Ocean1DRANS
         @test cfg.forcing.τx + cfg.forcing.Fx * cfg.grid.H ≈ 0 atol = 1e-14
     end
 
+    @testset "MY25/KC04 mature closure magnitude" begin
+        cfg = xuan_shen_config(; Nz = 64, La_t = 0.3, closure = :my25)
+        sol = run_to_steady(cfg; tol = 1e-5, max_steps = 2000, verbose = false)
+        @test sol.converged
+        @test maximum(sol.state.νt_c) > 0.08   # E6=4 should lift KM out of O(0.03)
+        @test cfg.closure isa MY25KC04Closure
+        @test cfg.closure.E6 == 4.0
+        @test cfg.closure.αs == 0.0          # strict KC04 momentum
+        # E6 enhances mixing vs E6=0
+        cfg0 = xuan_shen_config(; Nz = 48, La_t = 0.3, E6 = 0.0, closure = :my25)
+        sol0 = run_to_steady(cfg0; tol = 1e-5, max_steps = 2000, verbose = false)
+        @test maximum(sol.state.νt_c) > maximum(sol0.state.νt_c) * 1.05
+    end
+
     @testset "LESNut matches paper: small U, UL≈Us" begin
         cfg = xuan_shen_config(; Nz = 64, La_t = 0.3, closure = :les)
         sol = run_to_steady(cfg; verbose = false)

@@ -5,8 +5,8 @@
 用于在给定外强迫、边界条件与初始条件下求解稳态背景流与湍流粘性廓线。
 
 物理参考：
-- GOTM / Kantha & Clayson (2004): TKE 中的 Stokes 剪切生产
-- Harcourt (2013, 2015): Langmuir second-moment closure 思想
+- GOTM / Mellor–Yamada 2.5 + Kantha & Clayson (2004): 预后 q²、q²ℓ，E6 Stokes 源
+- Harcourt (2013, 2015): 可选 Lagrangian 动量应力
 - McWilliams et al. (1997) / Li & Fox-Kemper (2017): KPPLT
 - Xuan & Shen (2025) 型无分层 Langmuir 通道设定（压力梯度平衡风应力）
 """
@@ -21,8 +21,10 @@ include("stokes.jl")
 include("config.jl")
 include("closures/mixing_length.jl")
 include("closures/kl_stokes.jl")
+include("closures/my25_kc04.jl")
 include("closures/kpp_lt.jl")
 include("closures/les_nut.jl")
+include("presets.jl")
 include("momentum.jl")
 include("solver.jl")
 include("io.jl")
@@ -39,6 +41,7 @@ export
     Forcing, BoundarySetup, InitialState, ModelConfig,
     xuan_shen_config, mcwilliams1997_config,
     # closures
+    MY25KC04Closure, KanthaClayson2004Closure, HarcourtMomentumClosure,
     KLStokesClosure, KPPLTClosure, LESNutClosure,
     # solve
     ColumnState, SteadySolution,

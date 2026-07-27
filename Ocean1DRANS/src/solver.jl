@@ -1,8 +1,10 @@
 mutable struct ColumnState{T}
     U::Vector{T}
     V::Vector{T}
-    k::Vector{T}
+    k::Vector{T}       # TKE (= q²/2 for MY25)
     ℓ::Vector{T}
+    q2::Vector{T}      # MY25: twice TKE
+    q2l::Vector{T}     # MY25: q²ℓ
     νt_f::Vector{T}
     νt_c::Vector{T}
     t::T
@@ -32,21 +34,43 @@ function init_state(cfg::ModelConfig{T}) where {T}
     g = cfg.grid
     U = _eval_initial(cfg.initial.U, g.zc)
     V = _eval_initial(cfg.initial.V, g.zc)
+    clos = cfg.closure
     if isnothing(cfg.initial.k)
-        cμ = cfg.closure isa KLStokesClosure ? cfg.closure.cμ : T(0.09)
-        k0 = (cfg.forcing.u★^2) / sqrt(cμ)
+        if clos isa MY25KC04Closure
+            k0 = 0.5 * (clos.B1^(2 / 3)) * cfg.forcing.u★^2
+        elseif clos isa KLStokesClosure
+            k0 = (cfg.forcing.u★^2) / sqrt(clos.cμ)
+        else
+            k0 = (cfg.forcing.u★^2) / sqrt(T(0.09))
+        end
         k = fill(k0, g.Nz)
     else
         k = _eval_initial(cfg.initial.k, g.zc)
     end
-    κ = cfg.closure isa KLStokesClosure ? cfg.closure.κ :
-        cfg.closure isa KPPLTClosure ? cfg.closure.κ : 0.4
-    ℓ_max = cfg.closure isa KLStokesClosure ? cfg.closure.ℓ_max : Inf
-    channel = cfg.closure isa KLStokesClosure ? cfg.closure.channel : false
+    κ = if clos isa MY25KC04Closure
+        clos.κ
+    elseif clos isa KLStokesClosure
+        clos.κ
+    elseif clos isa KPPLTClosure
+        clos.κ
+    else
+        0.4
+    end
+    ℓ_max = clos isa KLStokesClosure ? clos.ℓ_max : Inf
+    channel = clos isa KLStokesClosure ? clos.channel : false
     ℓ = mixing_length(g; κ = κ, ℓ_max = ℓ_max, channel = channel)
+    q2 = similar(k)
+    q2l = similar(k)
+    if clos isa MY25KC04Closure
+        initialize_my25!(q2, q2l, g, cfg.forcing.u★, clos)
+        sync_tke_from_q2!(k, ℓ, q2, q2l, clos, g.H)
+    else
+        @. q2 = 2 * k
+        @. q2l = q2 * ℓ
+    end
     νt_f = zeros(T, g.Nz + 1)
     νt_c = zeros(T, g.Nz)
-    return ColumnState{T}(U, V, k, ℓ, νt_f, νt_c, zero(T))
+    return ColumnState{T}(U, V, k, ℓ, q2, q2l, νt_f, νt_c, zero(T))
 end
 
 function closure_αs(clos)
@@ -58,19 +82,28 @@ end
 
 function update_viscosity!(state::ColumnState, cfg::ModelConfig)
     clos = cfg.closure
-    if clos isa KLStokesClosure
+    if clos isa MY25KC04Closure
+        eddy_viscosity_my25!(state.νt_f, state.νt_c, state.q2, state.q2l, clos, cfg.grid)
+        sync_tke_from_q2!(state.k, state.ℓ, state.q2, state.q2l, clos, cfg.grid.H)
+    elseif clos isa KLStokesClosure
         mixing_length!(state.ℓ, cfg.grid;
                        κ = clos.κ, ℓ_max = clos.ℓ_max, channel = clos.channel)
         eddy_viscosity_faces!(state.νt_f, state.k, state.ℓ, clos, cfg.grid)
+        @inbounds for i in 1:cfg.grid.Nz
+            state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
+        end
     elseif clos isa KPPLTClosure
         eddy_viscosity_kpp!(state.νt_f, clos, cfg.grid, cfg.forcing, cfg.La_t)
+        @inbounds for i in 1:cfg.grid.Nz
+            state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
+        end
     elseif clos isa LESNutClosure
         eddy_viscosity_les!(state.νt_f, clos, cfg.grid, cfg.forcing)
+        @inbounds for i in 1:cfg.grid.Nz
+            state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
+        end
     else
         error("unsupported closure $(typeof(clos))")
-    end
-    @inbounds for i in 1:cfg.grid.Nz
-        state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
     end
     return state
 end
@@ -82,6 +115,7 @@ Lagrangian / Harcourt 动量通量：
 ```
 τ = (ν+νt)(∂U/∂z + αs ∂Us/∂z)  ⇒  ∂U/∂z = τ/(ν+νt) - αs ∂Us/∂z
 ```
+严格 KC04 取 `αs=0`。
 """
 function reconstruct_velocity_from_stress!(φ::AbstractVector, νt_f::AbstractVector,
                                            τ_top::Real, Fbody::Real,
@@ -153,7 +187,11 @@ function timestep!(state::ColumnState, cfg::ModelConfig, dt::Real)
                       φ_bottom_companion = state.V)
     diffuse_velocity!(state.V, νe, forc.τy, g, cfg.boundary, dt;
                       φ_bottom_companion = state.U)
-    if cfg.closure isa KLStokesClosure
+    if cfg.closure isa MY25KC04Closure
+        advance_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
+                      state.νt_c, state.νt_f, cfg.closure, g, forc.u★, dt)
+        update_viscosity!(state, cfg)
+    elseif cfg.closure isa KLStokesClosure
         update_tke!(state.k, state.U, state.V, cfg.stokes, state.νt_f, state.ℓ,
                     cfg.closure, g, forc, dt)
         update_viscosity!(state, cfg)
@@ -183,8 +221,8 @@ end
 """
     run_to_steady(cfg; kwargs...) -> SteadySolution
 
-迭代求解稳态背景流与湍流粘性。无 Coriolis 时用 Lagrangian 应力平衡；
-有 Coriolis 时用时间推进。
+迭代求解稳态背景流与湍流粘性。无 Coriolis 时用应力平衡；
+有 Coriolis 时用时间推进。默认成熟闭合为 MY2.5/KC04。
 """
 function run_to_steady(cfg::ModelConfig{T};
                        tol::Real = 1e-6,
@@ -203,10 +241,11 @@ function run_to_steady(cfg::ModelConfig{T};
     n = 0
     use_stress_balance = abs(cfg.forcing.f) < eps(T)
     αs = closure_αs(cfg.closure)
+    clos_name = string(nameof(typeof(cfg.closure)))
 
     if verbose
-        @printf("Ocean1DRANS steady run: Nz=%d, La_t=%.3f, αs=%.2f, method=%s, tol=%.1e\n",
-                cfg.grid.Nz, cfg.La_t, αs,
+        @printf("Ocean1DRANS steady run: Nz=%d, La_t=%.3f, αs=%.2f, closure=%s, method=%s, tol=%.1e\n",
+                cfg.grid.Nz, cfg.La_t, αs, clos_name,
                 use_stress_balance ? "stress-balance" : "time-march", tol)
     end
 
@@ -214,10 +253,11 @@ function run_to_steady(cfg::ModelConfig{T};
         ν_old = copy(state.νt_c)
         U_old = copy(state.U)
         k_old = copy(state.k)
+        q2_old = copy(state.q2)
         while n < max_steps
             n += 1
             update_viscosity!(state, cfg)
-            if n > 1 && !(cfg.closure isa LESNutClosure)
+            if n > 1 && !(cfg.closure isa LESNutClosure) && !(cfg.closure isa KPPLTClosure)
                 @. state.νt_c = underrelax * state.νt_c + (1 - underrelax) * ν_old
                 state.νt_f[1] = zero(T)
                 state.νt_f[end] = zero(T)
@@ -228,7 +268,13 @@ function run_to_steady(cfg::ModelConfig{T};
 
             _reconstruct_uv!(state, cfg)
 
-            if cfg.closure isa KLStokesClosure
+            if cfg.closure isa MY25KC04Closure
+                equilibrate_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
+                                  state.νt_c, cfg.closure, cfg.grid, cfg.forcing.u★;
+                                  underrelax = underrelax)
+                sync_tke_from_q2!(state.k, state.ℓ, state.q2, state.q2l,
+                                  cfg.closure, cfg.grid.H)
+            elseif cfg.closure isa KLStokesClosure
                 @inbounds for i in 1:cfg.grid.Nz
                     state.νt_c[i] = 0.5 * (state.νt_f[i] + state.νt_f[i + 1])
                 end
@@ -239,7 +285,6 @@ function run_to_steady(cfg::ModelConfig{T};
 
             dU = maximum(abs, state.U .- U_old)
             dν = maximum(abs, state.νt_c .- ν_old)
-            # 欧拉力在 Langmuir 极限下可接近 0，用 u★ 与 Us 定标
             scale = max(maximum(abs, state.U), maximum(abs, cfg.stokes.us_c),
                         cfg.forcing.u★, eps(T))
             residual = max(dU, dν) / scale
@@ -250,9 +295,21 @@ function run_to_steady(cfg::ModelConfig{T};
                         n, residual, maximum(abs, state.U), UL, maximum(state.νt_c))
             end
 
-            if residual < tol || cfg.closure isa LESNutClosure || cfg.closure isa KPPLTClosure
-                # 诊断闭合一步即可；KLStokes 再做几次一致性迭代
-                if cfg.closure isa KLStokesClosure
+            diagnostic_done = cfg.closure isa LESNutClosure || cfg.closure isa KPPLTClosure
+            if residual < tol || diagnostic_done
+                if cfg.closure isa MY25KC04Closure
+                    for _ in 1:20
+                        update_viscosity!(state, cfg)
+                        _reconstruct_uv!(state, cfg)
+                        q2_prev = copy(state.q2)
+                        equilibrate_my25!(state.q2, state.q2l, state.U, state.V, cfg.stokes,
+                                          state.νt_c, cfg.closure, cfg.grid, cfg.forcing.u★;
+                                          underrelax = 0.7)
+                        if maximum(abs, state.q2 .- q2_prev) / max(maximum(state.q2), eps(T)) < tol
+                            break
+                        end
+                    end
+                elseif cfg.closure isa KLStokesClosure
                     for _ in 1:8
                         update_viscosity!(state, cfg)
                         _reconstruct_uv!(state, cfg)
@@ -276,6 +333,7 @@ function run_to_steady(cfg::ModelConfig{T};
             U_old .= state.U
             ν_old .= state.νt_c
             k_old .= state.k
+            q2_old .= state.q2
         end
     else
         Δt = isnothing(dt) ? estimate_dt(state, cfg; cfl = cfl) : T(dt)
@@ -320,7 +378,7 @@ function run_to_steady(cfg::ModelConfig{T};
 end
 
 """
-诊断应力：`τ(z)=τx - Fx z`，以及 Lagrangian 剪切重建。
+诊断应力：`τ(z)=τx - Fx z`，以及剪切重建。
 """
 function diagnostic_stress_balance(sol::SteadySolution)
     cfg = sol.config
